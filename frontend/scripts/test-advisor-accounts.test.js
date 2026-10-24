@@ -37,6 +37,37 @@ beforeEach(async () => {
 })
 afterEach(() => { if (wrapper.exists()) wrapper.unmount(); document.body.innerHTML = '' })
 
+it('immediately reflects repeated disable/enable/disable writes while each fresh list is pending', async () => {
+  for (const [action, isActive] of [['停用', false], ['启用', true], ['停用', false]]) {
+    let release
+    fetchUsers.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    await click(action)
+    expect(updateUser).toHaveBeenLastCalledWith(9, { is_active: isActive })
+    expect(wrapper.find('.status-pill').text()).toBe(isActive ? '启用中' : '已停用')
+    const button = wrapper.findAll('button').find(b => b.text() === (isActive ? '停用' : '启用'))
+    expect(button.attributes('disabled')).toBeDefined()
+    release({ users: [{ ...fixtures.users[0], is_active: isActive }], tenant_options: fixtures.tenants })
+    await flushPromises()
+    expect(wrapper.find('.status-pill').text()).toBe(isActive ? '启用中' : '已停用')
+  }
+  expect(fetchUsers).toHaveBeenCalledTimes(4)
+})
+
+it('discards an older list that resolves after the latest status write and refresh', async () => {
+  fetchUsers.mockRejectedValueOnce(Error('列表暂时不可用'))
+  await click('停用')
+  expect(wrapper.find('.status-pill').text()).toBe('已停用')
+  let releaseOld
+  fetchUsers.mockImplementationOnce(() => new Promise(resolve => { releaseOld = resolve }))
+  await click('重试')
+  fetchUsers.mockResolvedValueOnce({ users: [{ ...fixtures.users[0], is_active: true }], tenant_options: fixtures.tenants })
+  await click('启用')
+  expect(wrapper.find('.status-pill').text()).toBe('启用中')
+  releaseOld({ users: [{ ...fixtures.users[0], is_active: false }], tenant_options: fixtures.tenants })
+  await flushPromises()
+  expect(wrapper.find('.status-pill').text()).toBe('启用中')
+})
+
 it('uses the existing advisor permission predicate and validates the complete grant selection', () => {
   expect(isAdvisorRole(fixtures.roles[0])).toBe(false)
   expect(isAdvisorRole(fixtures.roles[1])).toBe(true)

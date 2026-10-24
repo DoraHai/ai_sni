@@ -22,10 +22,22 @@ export const workspaceSelectionPath=session=>base+(session.isAdvisorSession===tr
 export function mountWorkbenchEntry({root,session,search=location.search,fetchImpl=fetch,navigate=path=>location.assign(path)}){
   const scope=entryScope(search);
   const params=new URLSearchParams(search),advisor=params.getAll('console').length===1&&params.get('console')==='advisor';
-  let module=scope.module||'seo',availableModules=[];
+  let module=scope.module||'seo',availableModules=[],identityCache=null;
+  const identityKey=()=>JSON.stringify([session.token,session.authRevision,session.user?.id]);
+  const readError=e=>e.name==='TimeoutError'?'读取超时，请点重新读取':e.name==='AbortError'?'读取已中止，请点重新读取':/[\u4e00-\u9fff]/.test(e.message||'')?e.message:'读取失败，请点重新读取';
   const selectedPath=()=>{if(advisor||session.isAdvisorSession===true)return base+'?console=advisor';const path=module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);return path+(scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'');};
   let generation=0,disposed=false,ownSessionChange=false,tenants=[],sites=[],tenantId=null,siteId=null,controllers=new Set();
-  const frame=body=>{root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;};
+  const frame=body=>{
+    const buttons=[...root.querySelectorAll('[data-entry="retry"], [data-entry="enter"], [data-entry="module"]')];
+    root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;
+    for(const button of buttons){
+      const next=[...root.querySelectorAll('[data-entry]')].find(node=>node.dataset.entry===button.dataset.entry&&node.dataset.module===button.dataset.module);
+      if(!next)continue;
+      for(const attr of [...button.attributes])button.removeAttribute(attr.name);
+      for(const attr of next.attributes)button.setAttribute(attr.name,attr.value);
+      button.innerHTML=next.innerHTML;next.replaceWith(button);
+    }
+  };
   const invalidate=()=>{generation++;for(const c of controllers)c.abort();controllers.clear();};
   const current=g=>!disposed&&generation===g;
   function setSession(fn){ownSessionChange=true;try{fn();}finally{ownSessionChange=false;}}
@@ -55,20 +67,21 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
       if(sites.length===1)siteId=sites[0].id;
       selector(sites.length?'':'此客户暂时没有可用网站，请顾问在模块中完成网站配置。');
       if(auto&&siteId)enter();
-    }catch(e){if(current(g)&&e.message!=='STALE')selector(e.message);}
+    }catch(e){if(current(g)&&e.message!=='STALE')selector(readError(e));}
   }
   function enter(){if(!tenants.some(t=>t.id===tenantId)||!sites.some(s=>s.id===siteId))return;setSession(()=>session.setTenant(tenantId));navigate(module==='geo'?geoWorkbenchPath(tenantId,siteId):workbenchPath(tenantId,siteId));}
-  async function spaces(){
+  async function spaces({reuseIdentity=false}={}){
     // Returning to the advisor console must preserve this tab's selected business session.
     if(session.isAdvisorSession===true){navigate(workspaceSelectionPath(session));return;}
     invalidate();const g=generation;tenants=[];sites=[];tenantId=null;siteId=null;
-    frame('<h2>正在打开工作台</h2><p role="status">核对账号与可用工作空间…</p>');
+    if(!reuseIdentity||identityCache?.key!==identityKey())identityCache=null;
+    frame('<h2>正在打开工作台</h2><p role="status">核对账号与可用工作空间…</p><button data-entry="retry">重新读取</button>');
     try{
-      const {user}=await read('/api/v1/auth/me',g);
+      const [{user},modules]=identityCache?.values||await Promise.all([read('/api/v1/auth/me',g),read('/api/v1/auth/modules',g)]);
       if(!positive(user?.id)||user.id!==session.user?.id||!user.permissions)throw Error('账号身份未通过核验，请退出后重新登录。');
       setSession(()=>session.refreshUser(user));
-      const modules=await read('/api/v1/auth/modules',g);
       if(modules.tenant_id!==user.tenant_id||!Array.isArray(modules.modules))throw Error('模块开通状态未通过核验。');
+      identityCache={key:identityKey(),values:[{user},modules]};
       availableModules=modules.modules.filter(m=>m.available===true&&(['seo','geo'].includes(m.module_code))).map(m=>m.module_code).filter(m=>m==='seo'?['view','edit'].includes(user.permissions['seo.content']):['geo.assets','geo.content'].every(k=>['view','edit'].includes(user.permissions[k])));
       if(!availableModules.length)throw Error('当前账号没有可用的 SEO 或 GEO 工作空间。');
       if(!availableModules.includes(module)){if(scope.module)throw Error('当前账号没有此模块权限。');module=availableModules[0];}
@@ -77,7 +90,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
       tenants=data.tenants.filter(t=>positive(t.id)&&(user.tenant_id==null||t.id===user.tenant_id));
       selector(tenants.length?'':'尚未分配可用客户，请联系顾问或管理员。');
       if(tenants.length===1)await loadSites(tenants[0].id,true);
-    }catch(e){if(current(g)&&e.message!=='STALE')errorView(e.message);}
+    }catch(e){if(current(g)&&e.message!=='STALE'){identityCache=null;invalidate();errorView(readError(e));}}
   }
   let captcha='';
   function refreshCaptcha(){
@@ -111,7 +124,7 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
     const a=button.dataset.entry;
     if(a==='captcha')refreshCaptcha();
     if(a==='retry')void spaces();
-    if(a==='module'&&availableModules.includes(button.dataset.module)){module=button.dataset.module;void spaces();}
+    if(a==='module'&&availableModules.includes(button.dataset.module)){module=button.dataset.module;void spaces({reuseIdentity:true});}
     if(a==='logout'){invalidate();setSession(()=>session.logout());login('已退出。');}
     if(a==='continue')navigate(selectedPath());
     if(a==='enter')enter();

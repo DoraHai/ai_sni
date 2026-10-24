@@ -224,12 +224,56 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-tenant-picker details'));
     assert(!calls.some(c=>c.path.includes('switch-account')||c.path.includes('linked-accounts')));
     assert(!calls.some(c=>c.path.startsWith('/api/distribution/')));
+    // The refreshed grant list now has exactly one customer: use the automatic selection.
+    const beforeAuto=calls.filter(c=>c.path==='/api/v1/auth/select-tenant').length;
     tenantsDenied=false;tenantRows=[{id:1,name:'客户甲'}];await p.locator('[data-advisor=refresh]').click();
-    await p.waitForSelector('[data-tenant="1"]');await p.locator('.advisor-tenant-picker summary').click();await p.locator('[data-tenant="1"]').click();await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);await p.waitForNetworkIdle({idleTime:200});
+    await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);await p.waitForNetworkIdle({idleTime:200});
+    assert.equal(calls.filter(c=>c.path==='/api/v1/auth/select-tenant').length,beforeAuto+1);
+    assert(!await p.$('.advisor-tenant-picker details'));
     roleChanged=true;const beforeRole=calls.length;await p.locator('[data-advisor=latest][data-module=seo]').click();
     await p.waitForFunction(()=>document.body.textContent.includes('你的客户授权已变化，请重新选择客户'));
     assert(!await p.$('.advisor-task'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     await p.waitForNetworkIdle({idleTime:200});assert(calls.length-beforeRole<=2,'Role change must not repeatedly reload the tenant list');
+    assert.deepEqual(errors,[]);
+  }finally{await browser.close();await fixture.close();}
+});
+
+for(const count of [0,1,2])test(`advisor automatically selects only when authorized customer count is ${count}`,async()=>{
+  const fixture=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true,args:['--no-sandbox']});
+  const origin='https://advisor-single.test',calls=[],errors=[];
+  const tenants=[{id:1,name:'唯一客户'},{id:2,name:'其他客户'}].slice(0,count);
+  try{
+    const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));
+    await p.evaluateOnNewDocument(({identity,user})=>sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:identity,user})),{identity,user});
+    await p.setRequestInterception(true);
+    let releaseMe,modulesSeen=false;
+    p.on('request',async req=>{
+      const url=new URL(req.url());if(url.protocol==='data:')return req.continue();if(url.origin!==origin)return req.abort();
+      const send=(data,status=200)=>req.respond({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
+      if(url.pathname.startsWith('/api/')){
+        calls.push({path:url.pathname,method:req.method(),body:req.postData()});
+        if(url.pathname==='/api/v1/auth/tenants')return send(tenants);
+        if(url.pathname==='/api/v1/auth/select-tenant')return send({access_token:business(1),token_type:'bearer',tenant_id:1,tenant_name:tenants[0].name,expires_at:'2099-01-01T00:00:00Z'});
+        if(url.pathname==='/api/v1/auth/me'){if(!modulesSeen)await new Promise(resolve=>releaseMe=resolve);return send({user});}
+        if(url.pathname==='/api/v1/auth/modules'){modulesSeen=true;releaseMe?.();return send({tenant_id:1,modules:[{module_code:'seo',available:true}]});}
+        if(url.pathname.endsWith('/advisor-tasks'))return send({schema:1,module:'seo',items:[],next_before_id:null});
+        return send({},404);
+      }
+      try{const r=await fetch(fixture.origin+url.pathname+url.search);await req.respond({status:r.status,contentType:r.headers.get('content-type'),body:Buffer.from(await r.arrayBuffer())});}catch{await req.abort().catch(()=>{});}
+    });
+    await p.goto(origin+'/customer-workbench/?console=advisor');
+    if(count===1){
+      await p.waitForFunction(()=>document.querySelector('.advisor-tenant-picker')?.textContent.includes('当前客户：唯一客户'));
+      await p.waitForFunction(()=>document.querySelector('[role=status]')?.textContent.includes('按真实阶段'));
+      assert.deepEqual(calls.filter(c=>c.path.endsWith('/select-tenant')).map(c=>JSON.parse(c.body)),[{tenant_id:1}]);
+      assert(calls.some(c=>c.path.endsWith('/advisor-tasks')));
+      await p.click('[data-advisor=refresh]');await p.waitForNetworkIdle({idleTime:100});
+      assert.equal(calls.filter(c=>c.path.endsWith('/select-tenant')).length,1);
+    }else{
+      await p.waitForFunction(count=>document.querySelector('.advisor-tenant-picker')?.textContent.includes(count?'请先选择客户':'没有'),{},count);
+      assert(!calls.some(c=>c.method==='POST'||c.path.endsWith('/me')||c.path.endsWith('/modules')||c.path.endsWith('/advisor-tasks')));
+    }
+    const shots=process.env.FRONTEND_FIX_SHOTS_DIR;if(shots)await p.screenshot({path:path.join(shots,`advisor-customers-${count}.png`),fullPage:true});
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await fixture.close();}
 });

@@ -42,6 +42,16 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = '' })
 
+it.each(['manual', 'seo'])('cancels %s edits through the same close event without saving', async kind => {
+  await open(kind)
+  if (kind === 'manual') await input('每日手动检测次数', '10')
+  else await input('SEO 网站', '11')
+  await click('取消')
+  expect(wrapper.emitted('close')).toHaveLength(1)
+  expect(api.saveManualQuota).not.toHaveBeenCalled()
+  expect(api.saveSiteAssignment).not.toHaveBeenCalled()
+})
+
 it.each(['0', '-1', '1.5', '101', '99999999999999999999', ''])('blocks invalid manual limit %s without a write or confirmation', async value => {
   await open(); await input('每日手动检测次数', value); await input('修改原因', '按客户需求调整'); await click('保存变更')
   expect(document.body.textContent).toContain('次数须为 1–100 的整数')

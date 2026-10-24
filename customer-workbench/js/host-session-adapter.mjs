@@ -99,7 +99,8 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
     const controller=new AbortController();pending.add(controller);
     try{
       const onsiteAi=method==='POST'&&/^\/api\/v1\/seo\/workbench\/onsite-tasks\/[1-9]\d*\/ai-proposal$/.test(url.pathname);
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'}),...(onsiteAi?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:options.signal?AbortSignal.any([controller.signal,options.signal]):controller.signal});
+      const signals=[controller.signal,...(options.signal?[options.signal]:[]),...(preflight?[AbortSignal.timeout(20000)]:[])];
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:`Bearer ${s.token}`,Accept:'application/json',...(method==='GET'?{}:{'Content-Type':'application/json'}),...(onsiteAi?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:AbortSignal.any(signals)});
       assertCurrent(s,started);
       if(response.status===401){invalidate('expired');logout?.();login();throw error('AUTH_EXPIRED',401);}
       if(response.status===403){
@@ -121,14 +122,16 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
   }
   async function initialize() {
     const s=sync();
+    // A retry owns fresh controllers and a fresh generation, even after a timeout.
+    generation++;for(const c of pending)c.abort();pending.clear();
+    authorized=null;moduleCatalog=[];modulesChecked=false;
     if(!s?.token){phase=typeof getSession==='function'?'unauthenticated':'disconnected';return {phase};}
     if(!positive(s.tenantId)||!positive(s.siteId)){phase='scope_required';return {phase};}
     const started=generation;phase='connecting';authorized=null;
     const read=async path=>{const r=await request(path,{method:'GET'},true);if(!r.ok)throw error('PREFLIGHT_FAILED',r.status);return r.json();};
     try{
-      const me=await read('/api/v1/auth/me'),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
+      const [me,modules]=await Promise.all([read('/api/v1/auth/me'),read('/api/v1/auth/modules')]),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
       if(user?.id!==s.userId||!user.permissions||(user.tenant_id!==null&&user.tenant_id!==s.tenantId))throw error('IDENTITY_SCOPE_MISMATCH');
-      const modules=await read('/api/v1/auth/modules');
       if(modules.tenant_id!==user.tenant_id||!Array.isArray(modules.modules))throw error('MODULE_UNAVAILABLE');
       moduleCatalog=modules.modules.filter(m=>['sem','seo','geo'].includes(m.module_code)).map(m=>({module_code:m.module_code,available:m.available===true}));
       modulesChecked=true;
@@ -141,7 +144,7 @@ export function createHostSessionAdapter({origin,fetchImpl=globalThis.fetch,getS
       const site=sites.sites?.find(v=>v.id===s.siteId);
       if(sites.tenant_id!==s.tenantId||!site||site.status!=='active'||!sites.selection_policy?.selectable_statuses?.includes('active'))throw error('SITE_NOT_ALLOWED');
       assertCurrent(s,started);authorized={user,tenant,site};phase='connected';return {phase,identity:structuredClone(authorized)};
-    }catch(e){if(generation===started){authorized=null;phase=e.code==='MODULE_UNAVAILABLE'?'module_pending':e.status===403||['IDENTITY_SCOPE_MISMATCH','TENANT_NOT_ALLOWED','SITE_NOT_ALLOWED'].includes(e.code)?'forbidden':'connection_error';}throw e;}
+    }catch(e){if(generation===started){for(const c of pending)c.abort();pending.clear();authorized=null;phase=e.code==='MODULE_UNAVAILABLE'?'module_pending':e.status===403||['IDENTITY_SCOPE_MISMATCH','TENANT_NOT_ALLOWED','SITE_NOT_ALLOWED'].includes(e.code)?'forbidden':'connection_error';}throw e;}
   }
   const unsubscribe=subscribeSession?.(()=>{sync();});
   return {

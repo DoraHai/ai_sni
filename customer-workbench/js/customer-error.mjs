@@ -10,6 +10,8 @@ const labels={
   INVALID_FILTER:'筛选条件无效，请调整后重试',
 };
 export function customerErrorLabel(error){
+  if(error?.name==='TimeoutError')return '读取超时，请点重新读取';
+  if(error?.name==='AbortError')return '读取已中止，请点重新读取';
   const code=error?.code||error?.message;
   return Object.hasOwn(labels,code)?labels[code]+'（'+code+'）':'';
 }

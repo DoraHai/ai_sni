@@ -141,6 +141,9 @@ onMounted(load)
         </div>
       </template>
     </section>
+    <template #footer>
+      <el-button :disabled="busy" @click="emit('close')">取消</el-button>
+    </template>
   </el-dialog>
 </template>
 

@@ -32,8 +32,11 @@ const LEVELS = [
   { v: 'edit', l: '可编辑' },
 ]
 const ADMIN_ROLE = '管理员'
+let loadRevision = 0
+const togglingUserIds = reactive(new Set())
 
 async function load() {
+  const revision = ++loadRevision
   loading.value = true
   error.value = ''
   try {
@@ -41,14 +44,15 @@ async function load() {
       fetchUsers(),
       fetchRoles(),
     ])
+    if (revision !== loadRevision) return
     usersData.value = users
     rolesData.value = roles
     tenantOptions.value = users.tenant_options || []
     return users
   } catch (e) {
-    error.value = e
+    if (revision === loadRevision) error.value = e
   } finally {
-    loading.value = false
+    if (revision === loadRevision) loading.value = false
   }
 }
 
@@ -220,15 +224,22 @@ async function resetPassword(row) {
 }
 
 async function toggleActive(row) {
-  const action = row.is_active ? '停用' : '启用'
+  if (togglingUserIds.has(row.id)) return
+  const isActive = !row.is_active
+  const action = isActive ? '启用' : '停用'
+  togglingUserIds.add(row.id)
   try {
     await ElMessageBox.confirm(`确认${action}账号「${row.username}」？`, action + '账号', { type: 'warning' })
-  } catch { return }
+  } catch { togglingUserIds.delete(row.id); return }
   try {
-    await updateUser(row.id, { is_active: !row.is_active })
+    await updateUser(row.id, { is_active: isActive })
+    // A list started before this write must not restore the old status.
+    ++loadRevision
+    if (usersData.value) usersData.value = { ...usersData.value, users: usersData.value.users.map(user => user.id === row.id ? { ...user, is_active: isActive } : user) }
     ElMessage.success(`已${action}`)
-    load()
+    await load()
   } catch (e) { ElMessage.error(e.message) }
+  finally { togglingUserIds.delete(row.id) }
 }
 
 async function removeUser(row) {
@@ -372,7 +383,7 @@ onMounted(load)
                 <el-button size="small" plain @click="resetPassword(row)">重置密码</el-button>
                 <el-button
                   size="small" :type="row.is_active ? 'danger' : 'success'" plain
-                  :disabled="row.id === session.user?.id"
+                  :disabled="row.id === session.user?.id || togglingUserIds.has(row.id)"
                   @click="toggleActive(row)"
                 >{{ row.is_active ? '停用' : '启用' }}</el-button>
                 <el-button size="small" type="danger" plain :disabled="row.id === session.user?.id" @click="removeUser(row)">删除</el-button>

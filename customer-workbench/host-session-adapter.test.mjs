@@ -129,3 +129,24 @@ test('session bridge tracks tenant changes independently of authRevision',()=>{
   const bridge=existingSessionBridge({session,getSiteId:()=>9,browser,watch:(getter,callback)=>{watched=getter;listener=callback;return()=>{};}});
   let events=0;const stop=bridge.subscribeSession(()=>events++);const before=watched();session.tenantId=2;assert.notDeepEqual(watched(),before);listener();assert.equal(events,1);assert.equal(bridge.getSession().tenantId,2);stop();
 });
+
+test('SEO preflight retries with fresh parallel reads and aborts the failed attempt',async()=>{
+  const calls=[];let first=true,oldSignal;
+  const host=createHostSessionAdapter({origin:'https://fixture.invalid',getSession:()=>({token:'fixture-customer',userId:12,tenantId:1,siteId:9,revision:1}),fetchImpl:async(url,options)=>{
+    const path=new URL(url).pathname;calls.push(path);
+    if(first){
+      if(path.endsWith('/me'))throw new DOMException('signal timed out','TimeoutError');
+      oldSignal=options.signal;
+      return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+    }
+    return Response.json(path.endsWith('/me')?{user:{id:12,tenant_id:1,permissions:{'seo.content':'view'}}}:path.endsWith('/modules')?{tenant_id:1,modules:[{module_code:'seo',available:true}]}:path.endsWith('/tenants')?{module:'seo',tenants:[{id:1}]}:{tenant_id:1,sites:[{id:9,status:'active'}],selection_policy:{selectable_statuses:['active']}});
+  }});
+  try{
+    await assert.rejects(host.initialize(),{name:'TimeoutError'});
+    assert.deepEqual(calls,['/api/v1/auth/me','/api/v1/auth/modules']);
+    assert.equal(oldSignal.aborted,true);assert.equal(host.getContext(),null);
+    first=false;assert.equal((await host.initialize()).phase,'connected');
+    assert.equal(calls.filter(p=>p.endsWith('/me')).length,2);
+    assert.equal(calls.filter(p=>p.endsWith('/modules')).length,2);
+  }finally{host.dispose();}
+});

@@ -62,3 +62,16 @@ test('explicit customer queries retain module and cursor bounds and reject forei
 test('late JSON body cannot survive a changed canonical auth revision',async()=>{const f=fixture();let release,bodyStarted;const started=new Promise(r=>bodyStarted=r),held=new Promise(r=>release=r);const client=createAdvisorClient({session:f.session,fetchImpl:async path=>({ok:true,status:200,json:async()=>{if(path.endsWith('/me'))return {user:f.session.user};if(path.endsWith('/modules'))return {tenant_id:null,modules:[{module_code:'seo',available:true}]};bodyStarted();await held;return page();}})});await client.initialize();const pending=client.list('seo');await started;f.session.authRevision++;release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);client.dispose();f.client.dispose();});
 test('a tenant scope change with the same login ID invalidates pending advisor reads',async()=>{const f=fixture();await f.client.initialize();let release;f.hold(new Promise(resolve=>release=resolve));const pending=f.client.list('seo');f.session.user.tenant_id=2;release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);await assert.rejects(()=>f.client.list('seo'),/PERMISSION_DENIED/);f.client.dispose();});
 test('an account change between advisor identity and module reads rejects the old identity',async()=>{const f=fixture();let release,ready;const started=new Promise(resolve=>ready=resolve),held=new Promise(resolve=>release=resolve);const client=createAdvisorClient({session:f.session,fetchImpl:async path=>({ok:true,status:200,json:async()=>{if(path.endsWith('/me'))return {user:structuredClone(f.session.user)};ready();await held;return {tenant_id:null,modules:[{module_code:'seo',available:true}]};}})});const pending=client.initialize();await started;f.session.user={...f.session.user,id:8};release();await assert.rejects(()=>pending,/CONTEXT_CHANGED/);await assert.rejects(()=>client.list('seo'),/PERMISSION_DENIED/);client.dispose();f.client.dispose();});
+
+test('advisor starts identity and modules concurrently',async()=>{
+  const f=fixture();let release;const started=[];
+  const held=new Promise(resolve=>release=resolve);
+  const client=createAdvisorClient({session:f.session,fetchImpl:async path=>{
+    started.push(path);await held;
+    return Response.json(path.endsWith('/me')?{user:f.session.user}:{tenant_id:null,modules:[{module_code:'seo',available:true}]});
+  }});
+  const pending=client.initialize();
+  assert.deepEqual(started,['/api/v1/auth/me','/api/v1/auth/modules']);
+  release();assert.deepEqual((await pending).modules,['seo']);
+  client.dispose();f.client.dispose();
+});

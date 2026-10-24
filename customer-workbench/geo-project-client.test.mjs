@@ -727,3 +727,23 @@ test('suppressed citation and publication render validated domain without URL or
   publication.domain = 'example.com';
   assert.match(geoResource('deliveries', deliveries), /example.com（链接未开放）/);
 });
+
+for(const timedOut of ['/api/v1/auth/me','/api/v1/auth/modules'])test(`GEO retries ${timedOut} timeout with fresh parallel preflight and aborts old reads`,async()=>{
+  const calls=[];let first=true,oldSignal;
+  const host=createGeoHostAdapter({origin:'https://fixture.test',getSession:()=>({token:'synthetic',userId:7,tenantId:1,projectId:10,revision:1}),fetchImpl:async(url,options)=>{
+    const path=new URL(url).pathname;calls.push(path);
+    if(first){
+      if(path===timedOut)throw new DOMException('signal timed out','TimeoutError');
+      oldSignal=options.signal;
+      return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+    }
+    return response(path.endsWith('/me')?{user:{id:7,tenant_id:1,permissions:{'geo.assets':'view','geo.content':'view'}}}:path.endsWith('/modules')?{tenant_id:1,modules:[{module_code:'geo',available:true}]}:path.endsWith('/tenants')?{tenants:[{id:1,name:'合成客户'}]}:{projects:[{id:10,tenant_id:1,status:'active'}]});
+  }});
+  try{
+    await assert.rejects(host.initialize(),{name:'TimeoutError'});
+    assert.deepEqual(calls,['/api/v1/auth/me','/api/v1/auth/modules']);
+    assert.equal(oldSignal.aborted,true);assert.equal(host.getContext().connected,false);
+    first=false;await host.initialize();assert.equal(host.getContext().connected,true);
+    assert.equal(calls.filter(p=>p.endsWith('/me')).length,2);assert.equal(calls.filter(p=>p.endsWith('/modules')).length,2);
+  }finally{host.dispose();}
+});

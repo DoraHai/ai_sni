@@ -41,6 +41,11 @@ test('dedicated entry logs in, chooses authorized scope, survives expiry and nev
     denyLogin=true;await submit();await p.waitForFunction(()=>document.querySelector('[role=status]')?.textContent.includes('用户名或密码'));
     assert.equal(await p.$eval('#entry-password',e=>e.value),'');assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
     denyLogin=false;await p.type('#entry-password','fixture-password');await submit();await p.waitForSelector('.summary-grid');
+    const authReads=()=>f.state.calls.filter(c=>['/api/v1/auth/me','/api/v1/auth/modules'].includes(c.path)).length;
+    const beforeTabs=authReads();
+    await p.click('.navigation [data-page="内容"]');await p.waitForSelector('#pagination-summary');
+    await p.click('.navigation [data-page="首页"]');await p.waitForSelector('.summary-grid');
+    assert.equal(authReads(),beforeTabs,'Customer tabs retain the verified identity and module catalog');
     assert.equal(new URL(p.url()).pathname,'/customer-workbench/');assert.equal(new URL(p.url()).searchParams.get('site_id'),'9');
     assert.equal(await p.evaluate(()=>localStorage.getItem('sem_auth_v1')),null);
     assert(!await p.$('a[href="/workspace/cockpit"]'));
@@ -62,5 +67,37 @@ test('dedicated entry logs in, chooses authorized scope, survives expiry and nev
     await p.screenshot({path:path.join(os.tmpdir(),'workbench-independent-login-mobile-20261009.png'),fullPage:true});
     assert.deepEqual(external,[]);assert.deepEqual(errors,[]);assert.equal(f.state.calls.filter(c=>c.method!=='GET').length,0);
     assert.equal(loginCalls.length,3);
+  }finally{await browser.close();await f.close();}
+});
+
+test('entry timeout retry starts both auth reads again; module tabs reuse only successful current identity',async()=>{
+  const f=await startFixtureServer(),browser=await puppeteer.launch({executablePath:edge,headless:true});
+  try{
+    const p=await browser.newPage();await p.goto(f.origin+'/js/customer-display.mjs');
+    await p.evaluate(async()=>{
+      const {mountWorkbenchEntry}=await import('/js/workbench-entry.mjs');
+      document.body.innerHTML='<div id="entry-test"></div>';
+      const session={token:'fixture-only',authRevision:1,user:{id:12},refreshUser(user){this.user=user;}};
+      const user={id:12,tenant_id:null,permissions:{'seo.content':'view','geo.assets':'view','geo.content':'view'}};
+      const state=window.entryTest={calls:[],mode:'timeout',aborted:false,navigated:null};
+      state.mount=mountWorkbenchEntry({root:document.querySelector('#entry-test'),session,search:'',navigate:path=>state.navigated=path,fetchImpl:async(path,options)=>{
+        state.calls.push(path);
+        if(state.mode==='timeout'&&path.endsWith('/me'))throw new DOMException('signal timed out','TimeoutError');
+        if(state.mode==='timeout'&&path.endsWith('/modules'))return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>{state.aborted=true;reject(options.signal.reason);},{once:true}));
+        return Response.json(path.endsWith('/me')?{user}:path.endsWith('/modules')?{tenant_id:null,modules:['seo','geo'].map(module_code=>({module_code,available:true}))}:{module:'seo',tenants:[{id:1,name:'甲'},{id:2,name:'乙'}]});
+      }});
+    });
+    await p.waitForSelector('[data-entry=retry]');
+    assert.match(await p.$eval('[role=status]',e=>e.textContent),/读取超时，请点重新读取/);
+    assert.equal(await p.evaluate(()=>entryTest.aborted),true);
+    assert.doesNotMatch(await p.$eval('body',e=>e.textContent),/signal timed out/);
+    await p.evaluate(()=>entryTest.mode='ok');await p.click('[data-entry=retry]');await p.waitForSelector('#entry-tenant');
+    assert.deepEqual(await p.evaluate(()=>entryTest.calls.filter(p=>p.endsWith('/me')||p.endsWith('/modules'))),['/api/v1/auth/me','/api/v1/auth/modules','/api/v1/auth/me','/api/v1/auth/modules']);
+    await p.click('[data-entry=module][data-module=geo]');await p.waitForFunction(()=>entryTest.calls.includes('/api/v1/geo/tenants'));
+    assert.equal(await p.evaluate(()=>entryTest.calls.filter(p=>p.endsWith('/me')||p.endsWith('/modules')).length),4);
+    await p.click('[data-entry=retry]');await p.waitForFunction(()=>entryTest.calls.filter(p=>p.endsWith('/me')).length===3);
+    await p.waitForSelector('#entry-tenant');
+    const shots=process.env.FRONTEND_FIX_SHOTS_DIR;if(shots)await p.screenshot({path:path.join(shots,'entry-retry-recovered.png'),fullPage:true});
+    await p.evaluate(()=>entryTest.mount.dispose());
   }finally{await browser.close();await f.close();}
 });
