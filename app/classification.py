@@ -7,6 +7,7 @@
   4. normal 一般词：兜底
   longtail 长尾精准词只能人工标（业务定义靠运营辨识，自动规则不产出）。
 """
+import asyncio
 import logging
 from datetime import datetime
 
@@ -63,7 +64,7 @@ async def reclassify_keywords(session: AsyncSession, tenant: Tenant) -> dict[str
 
     counts: dict[str, int] = {}
     now = datetime.utcnow()
-    for kw in rows:
+    for index, kw in enumerate(rows, 1):
         kw.total_impression = impressions.get(kw.keyword_id, 0)
         if kw.category_source != "manual":
             new_cat = classify_one(
@@ -73,6 +74,10 @@ async def reclassify_keywords(session: AsyncSession, tenant: Tenant) -> dict[str
                 kw.category = new_cat
                 kw.category_updated_at = now
         counts[kw.category] = counts.get(kw.category, 0) + 1
+        # ORM attribute updates and classification run synchronously even in
+        # an async function. Keep large tenants from starving HTTP requests.
+        if index % 128 == 0:
+            await asyncio.sleep(0)
 
     await session.commit()
     logger.info("租户 %s 关键词分级重算完成: %s", tenant.id, counts)

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from pydantic import Field
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, select, text, update
 from sqlalchemy.exc import DBAPIError
 
 from app.models import Role, Tenant, TenantModule, User
@@ -112,3 +112,28 @@ async def _sync_seo_assignments(session, user_id, *, added, removed, actor_id, n
             SET active = true, assigned_by = :actor_id, updated_at = :now
         """).bindparams(bindparam("tenant_ids", expanding=True)),
             {"tenant_ids": sorted(added), "actor_id": actor_id, "user_id": user_id, "now": now})
+
+
+async def revoke_deactivated_advisor(session, user_id, actor_id):
+    """Caller holds the user row; revoke in the account's transaction.
+
+    Only current grants and active assignments may change. In particular,
+    already revoked grant generations are protected immutable history.
+    """
+    if actor_id is None:
+        deny(403, "ADVISOR_NAMED_ADMIN_REQUIRED", "需要实名平台账号管理员")
+    now = datetime.now(timezone.utc)
+    # Synchronize any grants loaded by a simultaneous customer-list edit so
+    # the response cannot project the old, still-active ORM state.
+    await session.execute(update(AdvisorTenantGrant).where(
+        AdvisorTenantGrant.user_id == user_id,
+        AdvisorTenantGrant.revoked_at.is_(None),
+    ).values(revoked_at=now, revoked_by=actor_id,
+             revoke_reason="account_deactivated")
+        .execution_options(synchronize_session="fetch"))
+    await session.execute(text("""
+        UPDATE seo_site_advisor_assignments
+        SET active = false, assigned_by = :actor_id, updated_at = :now
+        WHERE advisor_user_id = :user_id AND active = true
+    """), {"user_id": user_id, "actor_id": actor_id,
+           "now": now.replace(tzinfo=None)})
