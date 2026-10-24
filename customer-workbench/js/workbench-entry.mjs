@@ -27,7 +27,17 @@ export function mountWorkbenchEntry({root,session,search=location.search,fetchIm
   const readError=e=>e.name==='TimeoutError'?'读取超时，请点重新读取':e.name==='AbortError'?'读取已中止，请点重新读取':/[\u4e00-\u9fff]/.test(e.message||'')?e.message:'读取失败，请点重新读取';
   const selectedPath=()=>{if(advisor||session.isAdvisorSession===true)return base+'?console=advisor';const path=module==='geo'?geoWorkbenchPath(scope.tenantId,scope.projectId):workbenchPath(scope.tenantId,scope.siteId);return path+(scope.onsiteTaskId?'&onsite_task_id='+scope.onsiteTaskId:'');};
   let generation=0,disposed=false,ownSessionChange=false,tenants=[],sites=[],tenantId=null,siteId=null,controllers=new Set();
-  const frame=body=>{root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;};
+  const frame=body=>{
+    const buttons=[...root.querySelectorAll('[data-entry="retry"], [data-entry="enter"], [data-entry="module"]')];
+    root.innerHTML=`<header class="entry-header"><b>G-SNIPERS</b><span>客户工作台</span></header><main class="entry-layout"><section class="entry-intro"><small>你的推广工作，在这里继续</small><h1>看进展，确认稿件，<br>与顾问一起推进。</h1><p>使用已有账号登录，无需先进入运营模块。</p></section><section class="entry-card">${body}</section></main>`;
+    for(const button of buttons){
+      const next=[...root.querySelectorAll('[data-entry]')].find(node=>node.dataset.entry===button.dataset.entry&&node.dataset.module===button.dataset.module);
+      if(!next)continue;
+      for(const attr of [...button.attributes])button.removeAttribute(attr.name);
+      for(const attr of next.attributes)button.setAttribute(attr.name,attr.value);
+      button.innerHTML=next.innerHTML;next.replaceWith(button);
+    }
+  };
   const invalidate=()=>{generation++;for(const c of controllers)c.abort();controllers.clear();};
   const current=g=>!disposed&&generation===g;
   function setSession(fn){ownSessionChange=true;try{fn();}finally{ownSessionChange=false;}}
