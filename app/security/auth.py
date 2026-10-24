@@ -325,7 +325,15 @@ async def require_scoped_auth(
 ) -> AuthContext:
     """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
     keys, need_edit = _required(request.url.path, request.method)
-    if keys is not None:
+    # This GEO feature explicitly admits the existing global account/customer
+    # administrator even without GEO edit menus. Keep all other route rules intact.
+    visibility_path = request.url.path == "/api/v1/geo/search-visibility/usage" or bool(re.fullmatch(
+        r"/api/v1/geo/projects/[1-9]\d*/search-visibility(?:/(?:config|run)|/runs/[1-9]\d*(?:/csv)?)?",
+        request.url.path,
+    ))
+    visibility_admin = (visibility_path and ctx.tenant_id is None
+                        and ctx.can_edit("settings.accounts") and ctx.can_edit("settings.customers"))
+    if keys is not None and not visibility_admin:
         ok = ctx.can_edit(*keys) if need_edit else ctx.can_view(*keys)
         if not ok:
             verb = "编辑" if need_edit else "访问"
