@@ -47,7 +47,7 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     }
     const c=new AbortController();pending.add(c);
     try{
-      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:'Bearer '+s.token,Accept:'application/json',...(['POST','PUT'].includes(method)?{'Content-Type':'application/json'}:{}),...(ai&&method==='POST'?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:visibility?AbortSignal.any([c.signal,AbortSignal.timeout(20000)]):c.signal});
+      const response=await fetchImpl(url.href,{method,body:options.body,headers:{Authorization:'Bearer '+s.token,Accept:'application/json',...(['POST','PUT'].includes(method)?{'Content-Type':'application/json'}:{}),...(ai&&method==='POST'?{'X-Snipers-Onsite-Protocol':'durable-v1'}:{})},cache:'no-store',credentials:'omit',redirect:'error',signal:visibility||preflight?AbortSignal.any([c.signal,AbortSignal.timeout(20000)]):c.signal});
       current(s,r);
       if(response.status===401){invalidate('expired');logout?.();redirectToLogin?.();fail('AUTH_EXPIRED',401);}
       if(response.status===403){invalidate('forbidden');fail('PERMISSION_DENIED',403);}
@@ -57,8 +57,10 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     }catch(e){if(!['AUTH_EXPIRED','PERMISSION_DENIED'].includes(e.code))current(s,r);throw e;}finally{pending.delete(c);}
   }
   async function initialize(){
-    const s=sync(),r=revision;identity=null;
+    const s=sync();revision++;for(const c of pending)c.abort();pending.clear();
+    const r=revision;identity=null;
     async function read(path){const response=await request(path,{},true);if(!response.ok)fail('PREFLIGHT_FAILED',response.status);return response.json();}
+    try{
     const [me,modules]=await Promise.all([read('/api/v1/auth/me'),read('/api/v1/auth/modules')]),user=s.advisor?{...me?.user,tenant_id:s.tenantId}:me?.user;
     if(user?.id!==s.userId||(user.tenant_id!=null&&user.tenant_id!==s.tenantId)||
       !['geo.assets','geo.content'].every(k=>['view','edit'].includes(user.permissions?.[k])))fail('PERMISSION_DENIED',403);
@@ -68,6 +70,7 @@ export function createGeoHostAdapter({origin,fetchImpl=fetch,getSession,subscrib
     const data=await read('/api/v1/geo/projects?tenant_id='+s.tenantId);
     const project=data.projects?.find(p=>p.id===s.projectId&&p.tenant_id===s.tenantId&&p.status==='active');
     if(!project)fail('PROJECT_NOT_ALLOWED');current(s,r);identity={user,tenant,project};return {identity:structuredClone(identity)};
+    }catch(error){if(revision===r){for(const c of pending)c.abort();pending.clear();identity=null;}throw error;}
   }
   const unsubscribe=subscribeSession?.(()=>sync());
   return {initialize,transport:(path,options)=>request(path,options),invalidate,

@@ -224,8 +224,12 @@ test('advisor selects authorized customers, clears old data, rejects foreign URL
     assert(!await p.$('.advisor-task'));assert(!await p.$('.advisor-tenant-picker details'));
     assert(!calls.some(c=>c.path.includes('switch-account')||c.path.includes('linked-accounts')));
     assert(!calls.some(c=>c.path.startsWith('/api/distribution/')));
+    // The refreshed grant list now has exactly one customer: use the automatic selection.
+    const beforeAuto=calls.filter(c=>c.path==='/api/v1/auth/select-tenant').length;
     tenantsDenied=false;tenantRows=[{id:1,name:'客户甲'}];await p.locator('[data-advisor=refresh]').click();
-    await p.waitForSelector('[data-tenant="1"]');await p.locator('.advisor-tenant-picker summary').click();await p.locator('[data-tenant="1"]').click();await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);await p.waitForNetworkIdle({idleTime:200});
+    await p.waitForFunction(()=>document.querySelectorAll('.advisor-task').length===2);await p.waitForNetworkIdle({idleTime:200});
+    assert.equal(calls.filter(c=>c.path==='/api/v1/auth/select-tenant').length,beforeAuto+1);
+    assert(!await p.$('.advisor-tenant-picker details'));
     roleChanged=true;const beforeRole=calls.length;await p.locator('[data-advisor=latest][data-module=seo]').click();
     await p.waitForFunction(()=>document.body.textContent.includes('你的客户授权已变化，请重新选择客户'));
     assert(!await p.$('.advisor-task'));assert.equal(await p.evaluate(()=>sessionStorage.getItem('sem_auth_v1')),null);
