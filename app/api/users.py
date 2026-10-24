@@ -17,7 +17,7 @@ from app.security.auth import AuthContext, hash_password, require_admin
 from app.platform_operations import audit_business
 from app.security.advisor_scope import is_advisor, deny, read_grants, active_grants
 from app.security.advisor_management import (TenantId, grants_version, lock_named_admin,
-                                            save_grants, validate_tenants)
+                                            revoke_deactivated_advisor, save_grants, validate_tenants)
 
 logger = logging.getLogger(__name__)
 
@@ -240,12 +240,18 @@ async def update_user(
     if req.display_name is not None:
         user.display_name = req.display_name
     if req.is_active is not None:
+        if advisor and user.is_active and req.is_active is False:
+            # Flush a simultaneous grant edit first, then revoke every current
+            # generation, including newly added ones, in this same transaction.
+            await session.flush()
+            await revoke_deactivated_advisor(session, user.id, ctx.user_id)
+            rows = None  # Reload the post-revocation projection after commit.
         user.is_active = req.is_active
     if req.new_password:
         user.password_hash = hash_password(req.new_password)
     after = _audit_state(user)
     if advisor and supplied:
-        after["tenant_ids"] = ids
+        after["tenant_ids"] = [] if before["is_active"] and req.is_active is False else ids
     if req.new_password:
         after['password_changed'] = True
     await audit_business(session, ctx, 'user:' + str(user.id), 'user.update', before, after)
@@ -272,6 +278,8 @@ async def delete_user(
     if user.tenant_id is None and all(permissions.get(key) == "edit" for key in PLATFORM_ADMIN_KEYS):
         raise HTTPException(400, "不能删除超级管理员账号")
     before = _audit_state(user)
+    if user.is_active and is_advisor(role):
+        await revoke_deactivated_advisor(session, user.id, ctx.user_id)
     user.is_active = False
     await audit_business(session, ctx, 'user:' + str(user.id), 'user.delete', before, _audit_state(user))
     await session.commit()
