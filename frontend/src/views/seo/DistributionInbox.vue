@@ -113,7 +113,7 @@ onBeforeUnmount(model.clear)
         <p>发布账号：{{ row.reportedAccount || '未提供' }} · {{ results[row.result] || '结果未知' }}</p>
         <p>操作人报告时间（北京时间）：{{ beijingTime(row.occurredAt) }} · 收到时间（北京时间）：{{ beijingTime(row.receivedAt) }}</p>
         <p v-if="row.duplicate">自己的收件箱中有相同链接，请核对</p>
-        <p v-if="row.assignment?.hidden">客户归属不可查看</p>
+        <p v-if="row.assignment?.hidden">客户归属不可查看 <span v-if="state.refreshErrors[row.id]" role="alert">{{ state.refreshErrors[row.id] }}</span></p>
         <template v-else-if="row.assignment">
           <p class="assignment-target">{{ assignmentLabel(row).customer }} · {{ assignmentLabel(row).module }} · <span :class="{ 'assignment-scope-missing': assignmentLabel(row).missingScope }">{{ assignmentLabel(row).scope }}</span></p>
           <p>外部回传 · 已标客户；改标请先撤销，再选择新客户或模块。</p>

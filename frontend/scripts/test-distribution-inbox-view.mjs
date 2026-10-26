@@ -260,3 +260,19 @@ test('rendered revision hint survives unrelated success and failure and only cle
     assert.equal(view.element.querySelector('article [role=alert]'), null)
   } finally { view.close() }
 })
+
+
+test('hidden assignment retains a readable conflict explanation after an unrelated list refresh', async () => {
+  const view = mount([{ tenantId: 42, name: '示例客户甲', modules: ['seo'] }]); await flush()
+  try {
+    view.api.label = async () => { throw Object.assign(new Error('记录已被改过，请重新读取后再试'), { code: 'REVISION_CONFLICT' }) }
+    await select(view.element.querySelector('article select'), 42)
+    await click(view.element, '标注客户')
+    view.api.receipts = async () => ({ items: [{ id, revision: 2, assignment: { hidden: true } }] })
+    await click(view.element, '搜索')
+    assert(view.element.textContent.includes('客户归属不可查看'))
+    assert.equal(view.element.querySelector('article [role=alert]').textContent, '记录已被改过，请重新读取后再试')
+    assert(view.element.textContent.includes('重新读取候选和回执'))
+    assert(!view.element.textContent.includes('保存标注修改'))
+  } finally { view.close() }
+})
