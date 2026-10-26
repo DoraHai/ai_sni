@@ -101,6 +101,22 @@ test('503 and capacity refusal preserve fixed Chinese errors', async () => {
   }
 })
 
+test('label API preserves exact reason codes and Chinese messages for failed writes', async () => {
+  for (const [status, code, message] of [
+    [409, 'DUPLICATE_LINK', '已有相同链接，请核对'],
+    [409, 'REVISION_CONFLICT', '记录已被改过，请重新读取后再试'],
+    [409, 'CROSS_TARGET_REQUIRES_UNLABEL', '请先在原客户撤销标注，再选择新客户或模块'],
+    [409, 'URL_HASH_COLLISION', '链接标识冲突，请联系超管核对'],
+    [403, 'INBOX_FORBIDDEN', '当前身份无权操作此记录'],
+    [404, 'RECEIPT_NOT_FOUND', '记录不存在或无权查看'],
+    [422, 'INVALID_SHAPE', '回传格式不正确，请核对后重试'],
+  ]) {
+    const api = createDistributionInboxApi({ getBusiness: () => ({ token: 'synthetic', revision: 1 }),
+      fetchImpl: async () => response({ detail: { code, message } }, status) })
+    await assert.rejects(api.label('seo', 42, id, { expectedRevision: 1, targetTenant: 42 }), { status, code, message })
+  }
+})
+
 function modelFixture() {
   const calls = []
   const api = {
@@ -122,7 +138,7 @@ test('identity reset clears visible records/code immediately and ignores late pa
     model.clear()
     delayed.resolve(operation === 'pair' ? { pairingCode: 'old-private-code' } : { items: [{ id: 'old-private-record' }] })
     await result
-    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
+    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false, refreshErrors: {} })
   }
 })
 
@@ -180,10 +196,60 @@ test('exact receipt focus bypasses list offset; label rereads assignment and 409
   const result = await model.label(model.state.focusedReceipt, { module: 'seo', tenantId: 42, scopeId: 2, article: { id: 123, version: 3, digest: 'synthetic-digest' } })
   assert.equal(result.assignment.articleId, 123)
   assert.equal(model.state.focusedReceipt.revision, 5)
-  api.label = async () => { throw Object.assign(new Error('版本已变化'), { status: 409 }) }
+  api.label = async () => { throw Object.assign(new Error('版本已变化'), { status: 409, code: 'REVISION_CONFLICT' }) }
   await model.label(result, { module: 'seo', tenantId: 42 })
   assert.equal(model.state.needsTargetRefresh, true)
   assert.equal(model.state.focusedReceipt.revision, 5)
   model.clear()
   assert.equal(model.state.focusedReceipt, null)
+})
+
+
+test('revision reread hints belong to each receipt and survive unrelated operations and failures', async () => {
+  const { api, model } = modelFixture()
+  const other = '22222222-2222-4222-8222-222222222222'
+  const conflict = Object.assign(new Error('记录已被改过，请重新读取后再试'), { code: 'REVISION_CONFLICT' })
+  api.label = async () => { throw conflict }
+  for (const key of [id, other]) await model.label({ id: key, revision: 1 }, { module: 'seo', tenantId: 42 })
+  for (const action of [() => model.pair(), () => model.page(50), () => model.search('合成失败'), () => model.refresh(), () => model.show('active')]) {
+    await action()
+    assert.deepEqual(Object.keys(model.state.refreshErrors), [id, other])
+    assert.equal(model.state.needsTargetRefresh, true)
+  }
+  api.createPairing = async () => { throw new Error('合成失败') }
+  await model.pair()
+  api.receipt = async () => { throw new Error('合成失败') }
+  await model.focusReceipt(id)
+  assert.deepEqual(Object.keys(model.state.refreshErrors), [id, other])
+  api.receipt = async key => ({ id: key, revision: 2 })
+  await model.focusReceipt(other)
+  assert.deepEqual(Object.keys(model.state.refreshErrors), [id])
+  api.label = async () => {}
+  await model.label({ id, revision: 2 }, { module: 'seo', tenantId: 42 })
+  assert.deepEqual(model.state.refreshErrors, {})
+  assert.equal(model.state.needsTargetRefresh, false)
+})
+
+test('only successful operations on the conflicted receipt clear its hint; cancelling removal preserves it', async () => {
+  const previous = globalThis.confirm
+  try {
+    for (const action of ['archive', 'remove', 'unlabel']) {
+      const { api, model } = modelFixture()
+      const row = { id, revision: 1, assignment: { module: 'seo', tenantId: 42 } }
+      api.label = async () => { throw Object.assign(new Error('合成失败'), { code: 'REVISION_CONFLICT' }) }
+      await model.label(row, { module: 'seo', tenantId: 42 })
+      globalThis.confirm = () => false
+      await model.remove(row)
+      assert.equal(model.state.refreshErrors[id], '合成失败')
+      api.archive = api.delete = api.unlabel = async () => { throw new Error('合成失败') }
+      globalThis.confirm = () => true
+      await model[action](row)
+      assert.equal(model.state.refreshErrors[id], '合成失败')
+      api.archive = api.delete = api.unlabel = async () => {}
+      await model[action]({ ...row, id: 'other' })
+      assert.equal(model.state.refreshErrors[id], '合成失败')
+      await model[action](row)
+      assert.deepEqual(model.state.refreshErrors, {})
+    }
+  } finally { globalThis.confirm = previous }
 })

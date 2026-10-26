@@ -1,6 +1,6 @@
 // Framework-independent request lifetime and two-step relabel state.
 export function createInboxState(api, changed = () => {}) {
-  const state = { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false }
+  const state = { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false, refreshErrors: {} }
   let generation = 0
   let controller = new AbortController()
 
@@ -8,21 +8,27 @@ export function createInboxState(api, changed = () => {}) {
     generation += 1
     controller.abort()
     controller = new AbortController()
-    Object.assign(state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
+    Object.assign(state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false, refreshErrors: {} })
     changed(state)
   }
-  async function operation(work) {
+  async function operation(work, receiptId = null, clearsRefresh = false) {
     if (state.busy) return
     const version = generation
-    state.busy = true; state.error = ''; changed(state)
+    state.busy = true; state.error = ''; state.errorReceiptId = null; changed(state)
     try {
       const result = await work(controller.signal)
       if (version !== generation) return
+      if (clearsRefresh && result !== false) {
+        delete state.refreshErrors[receiptId]
+        state.needsTargetRefresh = Object.keys(state.refreshErrors).length > 0
+      }
       return result
     } catch (error) {
       if (version === generation && error.name !== 'AbortError') {
         state.error = error.message
-        state.needsTargetRefresh = error.status === 409
+        state.errorReceiptId = receiptId
+        if (receiptId && error.code === 'REVISION_CONFLICT') state.refreshErrors[receiptId] = error.message
+        state.needsTargetRefresh = Object.keys(state.refreshErrors).length > 0
       }
     } finally {
       if (version === generation) { state.busy = false; changed(state) }
@@ -48,19 +54,19 @@ export function createInboxState(api, changed = () => {}) {
       const row = await api.receipt(receiptId, signal)
       if (version !== generation) return
       if (row.id !== receiptId) throw new Error('回执身份不符，请刷新')
-      state.focusedReceipt = row; state.needsTargetRefresh = false
+      state.focusedReceipt = row
       state.filter = 'active'; state.offset = 0
       await reload(signal)
-    }),
+    }, receiptId, true),
     show: filter => operation(async signal => { state.filter = filter; state.offset = 0; await reload(signal) }),
     page: offset => operation(async signal => { state.offset = Math.max(0, offset); await reload(signal) }),
     search: q => operation(async signal => { state.q = q; state.offset = 0; await reload(signal) }),
     owner: uid => operation(async signal => { state.items = []; state.devices = []; state.count = 0; state.offset = 0; state.ownerUserId = Number(uid) || null; changed(state); await reload(signal) }),
-    archive: receipt => operation(async signal => { await api.archive(receipt.id, receipt.revision, signal); await reload(signal) }),
+    archive: receipt => operation(async signal => { await api.archive(receipt.id, receipt.revision, signal); await reload(signal) }, receipt.id, true),
     remove: receipt => operation(async signal => {
-      if (!globalThis.confirm('清理内容后仍保留回传确认记录。确认清理？')) return
+      if (!globalThis.confirm('清理内容后仍保留回传确认记录。确认清理？')) return false
       await api.delete(receipt.id, receipt.revision, signal); await reload(signal)
-    }),
+    }, receipt.id, true),
     refresh: () => operation(reload),
     pair: () => operation(async signal => {
       const version = generation
@@ -86,13 +92,13 @@ export function createInboxState(api, changed = () => {}) {
       if (saved) state.focusedReceipt = saved
       await reload(signal)
       return saved
-    }),
+    }, receipt.id, true),
     // Each call uses the *current* business context. Never issue a new target
     // write automatically if unlabel failed or the identity changed in flight.
     unlabel: receipt => operation(async signal => {
       await api.unlabel(receipt.assignment.module, receipt.assignment.tenantId, receipt.id,
         { expectedRevision: receipt.revision, reason: '人工撤销归属' }, signal)
       await reload(signal)
-    }),
+    }, receipt.id, true),
   }
 }

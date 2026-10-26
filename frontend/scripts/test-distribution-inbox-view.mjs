@@ -35,9 +35,37 @@ function mount(targets = [], assignment = null, empty = false) {
   }
   const element = document.createElement('div'); document.body.append(element)
   const app = createApp(Component, { api, identity: 'synthetic-1', targets }); app.mount(element)
-  return { element, calls, close: () => { app.unmount(); element.remove() } }
+  return { element, calls, api, close: () => { app.unmount(); element.remove() } }
 }
 const click = async (element, label) => { [...element.querySelectorAll('button')].find(b => b.textContent === label).click(); await flush() }
+
+for (const [status, code, message] of [
+  [409, 'DUPLICATE_LINK', '已有相同链接，请核对'],
+  [409, 'REVISION_CONFLICT', '记录已被改过，请重新读取后再试'],
+  [409, 'CROSS_TARGET_REQUIRES_UNLABEL', '请先在原客户撤销标注，再选择新客户或模块'],
+  [409, 'URL_HASH_COLLISION', '链接标识冲突，请联系超管核对'],
+  [409, 'CONTENT_CONFIRMATION_REQUIRED', '当前稿件版本尚未获得客户确认或顾问代确认，请确认后再标注'],
+  [403, 'INBOX_FORBIDDEN', '当前身份无权操作此记录'],
+  [404, 'RECEIPT_NOT_FOUND', '记录不存在或无权查看'],
+  [422, 'INVALID_SHAPE', '回传格式不正确，请核对后重试'],
+]) {
+  test(`label ${code} stays next to the clicked button and only revision asks for reread`, async () => {
+    const view = mount([{ tenantId: 42, name: '示例客户甲', modules: ['seo'] }]); await flush()
+    try {
+      let writes = 0
+      view.api.label = async () => { writes += 1; throw Object.assign(new Error(message), { status, code }) }
+      const tenant = view.element.querySelector('article select')
+      tenant.value = '42'; tenant.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await flush()
+      await click(view.element, '标注客户')
+      const button = [...view.element.querySelectorAll('button')].find(b => b.textContent === '标注客户')
+      assert.equal(button.nextElementSibling.getAttribute('role'), 'alert')
+      assert.equal(button.nextElementSibling.textContent, message)
+      assert.equal(view.element.querySelectorAll('article [role=alert]').length, 1)
+      assert.equal(view.element.textContent.includes('重新读取候选和回执'), code === 'REVISION_CONFLICT')
+      assert.equal(writes, 1)
+    } finally { view.close() }
+  })
+}
 const select = async (element, value) => {
   element.value = String(value)
   element.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
@@ -207,5 +235,44 @@ test('customer and module switches recompute the scope and clear stale article c
     await select(tenant(), 43); assert.equal(scope().value, '9')
     await select(tenant(), 44); assert.equal(scope().value, '')
     await select(tenant(), ''); assert.equal(scope().value, '')
+  } finally { view.close() }
+})
+
+
+test('rendered revision hint survives unrelated success and failure and only clears after successful reread', async () => {
+  const view = mount([{ tenantId: 42, name: '示例客户甲', modules: ['seo'] }]); await flush()
+  try {
+    view.api.label = async () => { throw Object.assign(new Error('记录已被改过，请重新读取后再试'), { code: 'REVISION_CONFLICT' }) }
+    await select(view.element.querySelector('article select'), 42)
+    await click(view.element, '标注客户')
+    await click(view.element, '生成配对码')
+    assert.equal(view.element.querySelector('article [role=alert]').textContent, '记录已被改过，请重新读取后再试')
+    assert.equal(view.element.textContent.split('记录已被改过，请重新读取后再试').length - 1, 1)
+    view.api.createPairing = async () => { throw new Error('配对失败') }
+    await click(view.element, '生成配对码')
+    assert(view.element.textContent.includes('重新读取候选和回执'))
+    view.api.receipt = async () => { throw new Error('读取失败') }
+    await click(view.element, '重新读取候选和回执')
+    assert(view.element.textContent.includes('重新读取候选和回执'))
+    view.api.receipt = async () => ({ id, revision: 2, assignment: null })
+    await click(view.element, '重新读取候选和回执')
+    assert(!view.element.textContent.includes('重新读取候选和回执'))
+    assert.equal(view.element.querySelector('article [role=alert]'), null)
+  } finally { view.close() }
+})
+
+
+test('hidden assignment retains a readable conflict explanation after an unrelated list refresh', async () => {
+  const view = mount([{ tenantId: 42, name: '示例客户甲', modules: ['seo'] }]); await flush()
+  try {
+    view.api.label = async () => { throw Object.assign(new Error('记录已被改过，请重新读取后再试'), { code: 'REVISION_CONFLICT' }) }
+    await select(view.element.querySelector('article select'), 42)
+    await click(view.element, '标注客户')
+    view.api.receipts = async () => ({ items: [{ id, revision: 2, assignment: { hidden: true } }] })
+    await click(view.element, '搜索')
+    assert(view.element.textContent.includes('客户归属不可查看'))
+    assert.equal(view.element.querySelector('article [role=alert]').textContent, '记录已被改过，请重新读取后再试')
+    assert(view.element.textContent.includes('重新读取候选和回执'))
+    assert(!view.element.textContent.includes('保存标注修改'))
   } finally { view.close() }
 })

@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from app.database import get_session
 from app.distribution_inbox_protocol import (PREFIX, ProtocolError, fail, strict_json, exact_object, identifier,
-    validate_pairing, validate_claim, validate_ack_query, validate_revision, validate_label, clean_text)
+    validate_pairing, validate_claim, validate_ack_query, validate_revision, validate_label, clean_text, http_error_code)
 from app import distribution_inbox_service as service
 from app.models.distribution_inbox import DistributionInboxDevice as Device, DistributionInboxReceipt as Receipt
 from app.security.distribution_inbox_auth import require_inbox_identity
@@ -33,8 +33,7 @@ class SafeRoute(APIRoute):
                 error = ProtocolError('INBOX_SCHEMA_NOT_READY', 503)
                 response = JSONResponse({'detail': error.detail}, status_code=503)
             except HTTPException as exc:
-                code = exc.detail.get('code') if isinstance(exc.detail, dict) else None
-                code = code if code in service_errors else 'INBOX_FORBIDDEN'
+                code = http_error_code(exc.status_code, exc.detail)
                 response = JSONResponse({'detail': ProtocolError(code).detail}, status_code=exc.status_code)
             except (RequestValidationError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
                 response = JSONResponse({'detail': ProtocolError().detail}, status_code=422)
@@ -45,7 +44,6 @@ class SafeRoute(APIRoute):
         return handle
 
 
-from app.distribution_inbox_protocol import MESSAGES as service_errors
 router = APIRouter(route_class=SafeRoute)
 _claim_rates = OrderedDict()
 
