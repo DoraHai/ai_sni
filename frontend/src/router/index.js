@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError } from './chunkRecovery'
 import { session } from '../store/session'
+import { currentSeoSiteId } from '../views/seo/seoSiteContext'
+import { handoffLegacySeo } from './legacySeoHandoff.js'
 import { loginUrl } from '../auth/loginRedirect'
 import { SEM_PLANNED_CHANNELS, semChannelPath } from '../constants/semChannels'
 import { COCKPIT_PERMISSION_KEYS } from '../views/workspace/cockpit/scope.mjs'
@@ -409,7 +411,14 @@ function sessionRouteDecision(to, warn = true) {
   }
   return true
 }
-router.beforeEach((to) => sessionRouteDecision(to))
+router.beforeEach((to) => {
+  const handoff = handoffLegacySeo(to, { tenantId: session.tenantId, siteId: currentSeoSiteId.value }, window)
+  if (handoff) {
+    if (handoff === 'blocked') ElMessage.error('SEO 工作台入口未就绪，请稍后刷新重试')
+    return false
+  }
+  return sessionRouteDecision(to)
+})
 
 export function revalidateSessionRoute() {
   const decision = sessionRouteDecision(router.currentRoute.value, false)
