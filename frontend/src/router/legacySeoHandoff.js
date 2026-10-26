@@ -35,6 +35,12 @@ export function legacySeoUrl(to, { tenantId, siteId } = {}) {
   return destination + (search ? '?' + search : '') + (to.hash || '')
 }
 
+function canonicalDocument(path) {
+  const url = new URL(path, 'https://seo-handoff.invalid')
+  url.searchParams.sort()
+  return url.pathname + url.search + url.hash
+}
+
 // This module is used only by the generic SPA, never by the independent SEO router.
 // A single reload also handles a stale generic bundle opened directly at /seo/.
 export function handoffLegacySeo(to, context, browser) {
@@ -44,12 +50,14 @@ export function handoffLegacySeo(to, context, browser) {
     return null
   }
   const current = browser.location.pathname + browser.location.search + browser.location.hash
+  const canonicalTarget = canonicalDocument(target)
+  const sameDocument = canonicalDocument(current) === canonicalTarget
   try {
-    if (browser.sessionStorage.getItem(HANDOFF_KEY) === target && current === target) return 'blocked'
-    browser.sessionStorage.setItem(HANDOFF_KEY, target)
+    if (browser.sessionStorage.getItem(HANDOFF_KEY) === canonicalTarget && sameDocument) return 'blocked'
+    browser.sessionStorage.setItem(HANDOFF_KEY, canonicalTarget)
   } catch {
     // Without persistent storage, never reload an already matching document.
-    if (current === target) return 'blocked'
+    if (sameDocument) return 'blocked'
   }
   browser.location.assign(target)
   return 'redirected'

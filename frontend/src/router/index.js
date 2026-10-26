@@ -412,6 +412,7 @@ function sessionRouteDecision(to, warn = true) {
   return true
 }
 router.beforeEach((to) => {
+  // SEO owns its login and scope checks; hand off before applying generic SEM session rules.
   const handoff = handoffLegacySeo(to, { tenantId: session.tenantId, siteId: currentSeoSiteId.value }, window)
   if (handoff) {
     if (handoff === 'blocked') ElMessage.error('SEO 工作台入口未就绪，请稍后刷新重试')

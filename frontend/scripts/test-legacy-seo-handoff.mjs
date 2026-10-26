@@ -66,6 +66,20 @@ test('full-document navigation occurs once; a misrouted SEO document cannot relo
   assert.equal(handoffLegacySeo(to, {}, browser), 'redirected')
 })
 
+test('loop guard compares equivalent query order and encoding, including disabled storage', () => {
+  for (const disabled of [false, true]) {
+    const browser = browserAt('/workspace')
+    const to = route('/seo/distribution', { tenant_id: '42', site_id: '19', q: '合成 value' })
+    assert.equal(handoffLegacySeo(to, {}, browser), 'redirected')
+    browser.location.pathname = '/seo/distribution'
+    browser.location.search = '?site_id=19&tenant_id=42&q=%E5%90%88%E6%88%90%20value'
+    if (disabled) browser.sessionStorage = { getItem() { throw new Error('disabled') } }
+    const reordered = route('/seo/distribution', { site_id: '19', q: '合成 value', tenant_id: '42' })
+    assert.equal(handoffLegacySeo(reordered, {}, browser), 'blocked')
+    assert.equal(browser.calls.length, 1)
+  }
+})
+
 test('disabled storage permits handoff from SEM and blocks reloading the target document', () => {
   const browser = browserAt()
   browser.sessionStorage = { getItem() { throw new Error('disabled') }, setItem() { throw new Error('disabled') } }
@@ -83,7 +97,7 @@ test('actual generic router cancels every SEO navigation before loading any old 
   const code = source.replace(/^import .*$/gm, '').replace('createWebHistory()', 'createMemoryHistory()')
   const setup = `import { createRouter, createMemoryHistory } from ${JSON.stringify(vueRouterUrl)};
 import { handoffLegacySeo } from ${JSON.stringify(handoffUrl)};
-const session = { isLoggedIn: true, tenantId: 42, canView: () => true, canEdit: () => true };
+const session = globalThis.__handoffSession;
 const currentSeoSiteId = { value: 19 };
 const ElMessage = { error() {}, warning() {} };
 const SEM_PLANNED_CHANNELS = [], COCKPIT_PERMISSION_KEYS = [];
@@ -91,6 +105,7 @@ const clearChunkRecoveryMarker = () => {}, recoverFromChunkLoadError = () => fal
 const semChannelPath = () => '', loginUrl = () => '/login';
 `
   await import(vueRouterUrl) // initialize Vue in Node before installing the minimal browser stub
+  globalThis.__handoffSession = { isLoggedIn: true, tenantId: 42, canView: () => true, canEdit: () => true }
   globalThis.window = browserAt()
   globalThis.document = { title: '' }
   const { default: router } = await import('data:text/javascript;base64,' + Buffer.from(setup + code).toString('base64'))
@@ -108,4 +123,10 @@ const semChannelPath = () => '', loginUrl = () => '/login';
     assert.equal(target.searchParams.get('site_id'), '19', path)
     assert.equal(router.currentRoute.value.matched.length, 0, path)
   }
+  // The independent SEO router is responsible for login; no SEM login redirect can consume this URL.
+  globalThis.__handoffSession.isLoggedIn = false
+  globalThis.__handoffSession.tenantId = null
+  await router.push('/seo/distribution?tenant_id=42&site_id=19')
+  assert.equal(window.calls.at(-1), '/seo/distribution?tenant_id=42&site_id=19')
+  assert.equal(router.currentRoute.value.matched.length, 0)
 })
