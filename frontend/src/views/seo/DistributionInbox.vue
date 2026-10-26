@@ -91,8 +91,8 @@ onBeforeUnmount(model.clear)
 <template>
   <main ref="inboxElement" class="inbox">
     <h1>多号通回传</h1>
-    <p v-if="state.error" role="alert">{{ state.error }}</p>
-    <p v-if="state.needsTargetRefresh">版本或归属已变化，请重新读取候选并核对后再保存。<button :disabled="state.busy" @click="emit('refresh-targets'); receiptId && model.focusReceipt(receiptId)">重新读取候选和回执</button></p>
+    <p v-if="state.error && !state.errorReceiptId" role="alert">{{ state.error }}</p>
+    <p v-if="state.needsTargetRefresh && !state.errorReceiptId">记录已被改过，请重新读取后再试。<button :disabled="state.busy" @click="emit('refresh-targets'); receiptId && model.focusReceipt(receiptId)">重新读取候选和回执</button></p>
     <section aria-labelledby="pair-title">
       <h2 id="pair-title">电脑配对</h2>
       <p>不用先选客户或平台。此码需要多号通0.3.7，旧版请先升级。</p>
@@ -124,6 +124,7 @@ onBeforeUnmount(model.clear)
             <select :value="articleId[row.id] ?? row.assignment.articleId ?? ''" :disabled="state.busy" @change="articleId[row.id] = $event.target.value"><option value="">未关联稿件</option><option v-for="article in articlesFor(row)" :key="article.id" :value="article.id">{{ article.title }}</option></select>
             <input :value="publishedAccount[row.id] ?? row.assignment.publishedAccount ?? ''" maxlength="60" placeholder="发布账号（留空恢复上报值）" @input="publishedAccount[row.id] = $event.target.value" />
             <button :disabled="state.busy" @click="update(row)">保存标注修改</button>
+            <span v-if="state.errorReceiptId === row.id" role="alert">{{ state.error }}</span>
           </details>
           <button :disabled="state.busy" @click="model.unlabel(row)">撤销标注</button>
         </template>
@@ -145,9 +146,11 @@ onBeforeUnmount(model.clear)
             <p>未关联稿件，不核验正文，不计入稿件验收。</p>
           </details>
           <button :disabled="state.busy || !targetId[row.id] || !moduleId[row.id]" @click="label(row)">标注客户</button>
+          <span v-if="state.errorReceiptId === row.id" role="alert">{{ state.error }}</span>
           <button :disabled="state.busy" @click="model.archive(row)">归档</button>
           <button :disabled="state.busy" @click="model.remove(row)">清理内容</button>
         </template>
+        <p v-if="state.needsTargetRefresh && state.errorReceiptId === row.id">记录已被改过，请重新读取后再试。<button :disabled="state.busy" @click="emit('refresh-targets'); model.focusReceipt(row.id)">重新读取候选和回执</button></p>
       </article>
       <p><button :disabled="state.busy || state.offset === 0" @click="model.page(state.offset - 50)">上一页</button><span>{{ state.total }} 条 · 第 {{ Math.floor(state.offset / 50) + 1 }} 页</span><button :disabled="state.busy || state.offset + 50 >= state.total" @click="model.page(state.offset + 50)">下一页</button></p>
     </section>

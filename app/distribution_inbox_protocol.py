@@ -31,19 +31,40 @@ MESSAGES = {
     'PAYLOAD_DIGEST_INVALID': '回传摘要不一致，请保留本机结果',
     'DEVICE_CREDENTIAL_INVALID': '设备配对已失效，请重新配对',
     'INBOX_FORBIDDEN': '当前身份无权操作此记录',
+    'INBOX_IDENTITY_REQUIRED': '身份会话已失效，请重新登录',
+    'INBOX_CONFLICT': '记录存在冲突，请重新读取后核对',
     'RECEIPT_NOT_FOUND': '记录不存在或无权查看',
     'EVENT_NOT_FOUND': '记录不存在或无权查看',
     'PAIRING_CODE_UNAVAILABLE': '配对码不可用，请生成新码',
     'EVENT_DIGEST_CONFLICT': '同一事件内容不一致，请保留本机结果并核对',
-    'REVISION_CONFLICT': '记录已更新，请刷新后重试',
+    'REVISION_CONFLICT': '记录已被改过，请重新读取后再试',
     'CROSS_TARGET_REQUIRES_UNLABEL': '请先在原客户撤销标注，再选择新客户或模块',
     'DUPLICATE_LINK': '已有相同链接，请核对',
     'URL_HASH_COLLISION': '链接标识冲突，请联系超管核对',
+    'CONTENT_NOT_READY': '内容主稿尚未审核通过，请审核后再标注',
+    'CONTENT_LANDING_PAGE_REQUIRED': '落地页内容尚未绑定承接页，请绑定后再标注',
+    'CONTENT_CONFIRMATION_REQUIRED': '当前稿件版本尚未获得客户确认或顾问代确认，请确认后再标注',
     'INBOX_CAPACITY_EXCEEDED': '待标记录已满，结果仍留在本机，请先标注或清理再重试',
     'RATE_LIMITED': '操作过于频繁或设备数量已满，请稍后重试',
     'DEVICE_LIMIT_REACHED': '操作过于频繁或设备数量已满，请稍后重试',
     'INBOX_SCHEMA_NOT_READY': '功能尚未准备好',
 }
+
+
+def http_error_code(status, detail):
+    """Only expose fixed protocol messages, never arbitrary exception details."""
+    code = detail.get('code') if isinstance(detail, dict) else None
+    if isinstance(code, str) and code in MESSAGES:
+        return code
+    if status == 409:
+        if code == 'content_confirmation_required':
+            return 'CONTENT_CONFIRMATION_REQUIRED'
+        if detail == '内容主稿尚未审核通过，不能进入发布流程':
+            return 'CONTENT_NOT_READY'
+        if detail == '落地页内容尚未绑定承接页，不能进入发布流程':
+            return 'CONTENT_LANDING_PAGE_REQUIRED'
+    return {401: 'INBOX_IDENTITY_REQUIRED', 404: 'RECEIPT_NOT_FOUND',
+            409: 'INBOX_CONFLICT', 422: 'INVALID_SHAPE'}.get(status, 'INBOX_FORBIDDEN')
 
 
 class ProtocolError(ValueError):

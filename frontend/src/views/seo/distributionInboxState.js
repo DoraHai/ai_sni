@@ -1,6 +1,6 @@
 // Framework-independent request lifetime and two-step relabel state.
 export function createInboxState(api, changed = () => {}) {
-  const state = { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false }
+  const state = { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false }
   let generation = 0
   let controller = new AbortController()
 
@@ -8,13 +8,13 @@ export function createInboxState(api, changed = () => {}) {
     generation += 1
     controller.abort()
     controller = new AbortController()
-    Object.assign(state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
+    Object.assign(state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
     changed(state)
   }
-  async function operation(work) {
+  async function operation(work, receiptId = null) {
     if (state.busy) return
     const version = generation
-    state.busy = true; state.error = ''; changed(state)
+    state.busy = true; state.error = ''; state.errorReceiptId = null; state.needsTargetRefresh = false; changed(state)
     try {
       const result = await work(controller.signal)
       if (version !== generation) return
@@ -22,7 +22,8 @@ export function createInboxState(api, changed = () => {}) {
     } catch (error) {
       if (version === generation && error.name !== 'AbortError') {
         state.error = error.message
-        state.needsTargetRefresh = error.status === 409
+        state.errorReceiptId = receiptId
+        state.needsTargetRefresh = error.code === 'REVISION_CONFLICT'
       }
     } finally {
       if (version === generation) { state.busy = false; changed(state) }
@@ -86,7 +87,7 @@ export function createInboxState(api, changed = () => {}) {
       if (saved) state.focusedReceipt = saved
       await reload(signal)
       return saved
-    }),
+    }, receipt.id),
     // Each call uses the *current* business context. Never issue a new target
     // write automatically if unlabel failed or the identity changed in flight.
     unlabel: receipt => operation(async signal => {

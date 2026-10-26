@@ -35,9 +35,37 @@ function mount(targets = [], assignment = null, empty = false) {
   }
   const element = document.createElement('div'); document.body.append(element)
   const app = createApp(Component, { api, identity: 'synthetic-1', targets }); app.mount(element)
-  return { element, calls, close: () => { app.unmount(); element.remove() } }
+  return { element, calls, api, close: () => { app.unmount(); element.remove() } }
 }
 const click = async (element, label) => { [...element.querySelectorAll('button')].find(b => b.textContent === label).click(); await flush() }
+
+for (const [status, code, message] of [
+  [409, 'DUPLICATE_LINK', '已有相同链接，请核对'],
+  [409, 'REVISION_CONFLICT', '记录已被改过，请重新读取后再试'],
+  [409, 'CROSS_TARGET_REQUIRES_UNLABEL', '请先在原客户撤销标注，再选择新客户或模块'],
+  [409, 'URL_HASH_COLLISION', '链接标识冲突，请联系超管核对'],
+  [409, 'CONTENT_CONFIRMATION_REQUIRED', '当前稿件版本尚未获得客户确认或顾问代确认，请确认后再标注'],
+  [403, 'INBOX_FORBIDDEN', '当前身份无权操作此记录'],
+  [404, 'RECEIPT_NOT_FOUND', '记录不存在或无权查看'],
+  [422, 'INVALID_SHAPE', '回传格式不正确，请核对后重试'],
+]) {
+  test(`label ${code} stays next to the clicked button and only revision asks for reread`, async () => {
+    const view = mount([{ tenantId: 42, name: '示例客户甲', modules: ['seo'] }]); await flush()
+    try {
+      let writes = 0
+      view.api.label = async () => { writes += 1; throw Object.assign(new Error(message), { status, code }) }
+      const tenant = view.element.querySelector('article select')
+      tenant.value = '42'; tenant.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await flush()
+      await click(view.element, '标注客户')
+      const button = [...view.element.querySelectorAll('button')].find(b => b.textContent === '标注客户')
+      assert.equal(button.nextElementSibling.getAttribute('role'), 'alert')
+      assert.equal(button.nextElementSibling.textContent, message)
+      assert.equal(view.element.querySelectorAll('article [role=alert]').length, 1)
+      assert.equal(view.element.textContent.includes('重新读取候选和回执'), code === 'REVISION_CONFLICT')
+      assert.equal(writes, 1)
+    } finally { view.close() }
+  })
+}
 const select = async (element, value) => {
   element.value = String(value)
   element.dispatchEvent(new dom.window.Event('change', { bubbles: true }))

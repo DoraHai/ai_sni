@@ -113,3 +113,42 @@ def test_real_http_extra_selectors_duplicate_queries_and_encoded_aliases_are_rej
 def test_only_personnel_admin_can_explicitly_filter_owner(local_db):
     assert asyncio.run(call(local_db, bearer(3), suffix='/receipts?ownerUserId=1')).status_code == 200
     assert asyncio.run(call(local_db, identity(), suffix='/receipts?q=synthetic&limit=50&offset=0')).status_code == 200
+
+
+@pytest.mark.parametrize('status,detail,code', [
+    (409, '内容主稿尚未审核通过，不能进入发布流程', 'CONTENT_NOT_READY'),
+    (409, '落地页内容尚未绑定承接页，不能进入发布流程', 'CONTENT_LANDING_PAGE_REQUIRED'),
+    (409, {'code': 'content_confirmation_required', 'message': 'private synthetic detail',
+           'current_payload_hash': 'synthetic-private-hash'}, 'CONTENT_CONFIRMATION_REQUIRED'),
+    (409, {'code': 'DUPLICATE_LINK'}, 'DUPLICATE_LINK'),
+    (409, {'code': 'REVISION_CONFLICT'}, 'REVISION_CONFLICT'),
+    (409, {'code': 'CROSS_TARGET_REQUIRES_UNLABEL'}, 'CROSS_TARGET_REQUIRES_UNLABEL'),
+    (409, {'code': 'URL_HASH_COLLISION'}, 'URL_HASH_COLLISION'),
+    (401, 'private synthetic detail', 'INBOX_IDENTITY_REQUIRED'),
+    (403, 'private synthetic detail', 'INBOX_FORBIDDEN'),
+    (404, 'private synthetic detail', 'RECEIPT_NOT_FOUND'),
+    (422, 'private synthetic detail', 'INVALID_SHAPE'),
+    (409, {'code': ['malformed']}, 'INBOX_CONFLICT'),
+])
+def test_safe_route_preserves_status_and_fixed_label_reason_without_private_details(status, detail, code):
+    from fastapi import APIRouter, HTTPException
+    from app.api.distribution_inbox import SafeRoute
+    from app.distribution_inbox_protocol import MESSAGES
+
+    app = FastAPI()
+    router = APIRouter(route_class=SafeRoute)
+
+    @router.post('/synthetic-label')
+    async def refused():
+        raise HTTPException(status, detail)
+
+    app.include_router(router)
+
+    async def request():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://synthetic.invalid') as client:
+            return await client.post('/synthetic-label')
+
+    response = asyncio.run(request())
+    assert response.status_code == status
+    assert response.json() == {'detail': {'code': code, 'message': MESSAGES[code]}}
+    assert response.headers['cache-control'] == 'private, no-store'

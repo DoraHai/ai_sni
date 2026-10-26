@@ -101,6 +101,22 @@ test('503 and capacity refusal preserve fixed Chinese errors', async () => {
   }
 })
 
+test('label API preserves exact reason codes and Chinese messages for failed writes', async () => {
+  for (const [status, code, message] of [
+    [409, 'DUPLICATE_LINK', '已有相同链接，请核对'],
+    [409, 'REVISION_CONFLICT', '记录已被改过，请重新读取后再试'],
+    [409, 'CROSS_TARGET_REQUIRES_UNLABEL', '请先在原客户撤销标注，再选择新客户或模块'],
+    [409, 'URL_HASH_COLLISION', '链接标识冲突，请联系超管核对'],
+    [403, 'INBOX_FORBIDDEN', '当前身份无权操作此记录'],
+    [404, 'RECEIPT_NOT_FOUND', '记录不存在或无权查看'],
+    [422, 'INVALID_SHAPE', '回传格式不正确，请核对后重试'],
+  ]) {
+    const api = createDistributionInboxApi({ getBusiness: () => ({ token: 'synthetic', revision: 1 }),
+      fetchImpl: async () => response({ detail: { code, message } }, status) })
+    await assert.rejects(api.label('seo', 42, id, { expectedRevision: 1, targetTenant: 42 }), { status, code, message })
+  }
+})
+
 function modelFixture() {
   const calls = []
   const api = {
@@ -122,7 +138,7 @@ test('identity reset clears visible records/code immediately and ignores late pa
     model.clear()
     delayed.resolve(operation === 'pair' ? { pairingCode: 'old-private-code' } : { items: [{ id: 'old-private-record' }] })
     await result
-    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
+    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
   }
 })
 
@@ -180,7 +196,7 @@ test('exact receipt focus bypasses list offset; label rereads assignment and 409
   const result = await model.label(model.state.focusedReceipt, { module: 'seo', tenantId: 42, scopeId: 2, article: { id: 123, version: 3, digest: 'synthetic-digest' } })
   assert.equal(result.assignment.articleId, 123)
   assert.equal(model.state.focusedReceipt.revision, 5)
-  api.label = async () => { throw Object.assign(new Error('版本已变化'), { status: 409 }) }
+  api.label = async () => { throw Object.assign(new Error('版本已变化'), { status: 409, code: 'REVISION_CONFLICT' }) }
   await model.label(result, { module: 'seo', tenantId: 42 })
   assert.equal(model.state.needsTargetRefresh, true)
   assert.equal(model.state.focusedReceipt.revision, 5)
