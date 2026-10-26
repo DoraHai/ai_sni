@@ -138,7 +138,7 @@ test('identity reset clears visible records/code immediately and ignores late pa
     model.clear()
     delayed.resolve(operation === 'pair' ? { pairingCode: 'old-private-code' } : { items: [{ id: 'old-private-record' }] })
     await result
-    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false })
+    assert.deepEqual(model.state, { items: [], devices: [], count: 0, pairing: null, busy: false, error: '', errorReceiptId: null, filter: 'pending', ownerUserId: null, offset: 0, total: 0, q: '', focusedReceipt: null, needsTargetRefresh: false, refreshErrors: {} })
   }
 })
 
@@ -202,4 +202,54 @@ test('exact receipt focus bypasses list offset; label rereads assignment and 409
   assert.equal(model.state.focusedReceipt.revision, 5)
   model.clear()
   assert.equal(model.state.focusedReceipt, null)
+})
+
+
+test('revision reread hints belong to each receipt and survive unrelated operations and failures', async () => {
+  const { api, model } = modelFixture()
+  const other = '22222222-2222-4222-8222-222222222222'
+  const conflict = Object.assign(new Error('记录已被改过，请重新读取后再试'), { code: 'REVISION_CONFLICT' })
+  api.label = async () => { throw conflict }
+  for (const key of [id, other]) await model.label({ id: key, revision: 1 }, { module: 'seo', tenantId: 42 })
+  for (const action of [() => model.pair(), () => model.page(50), () => model.search('合成失败'), () => model.refresh(), () => model.show('active')]) {
+    await action()
+    assert.deepEqual(Object.keys(model.state.refreshErrors), [id, other])
+    assert.equal(model.state.needsTargetRefresh, true)
+  }
+  api.createPairing = async () => { throw new Error('合成失败') }
+  await model.pair()
+  api.receipt = async () => { throw new Error('合成失败') }
+  await model.focusReceipt(id)
+  assert.deepEqual(Object.keys(model.state.refreshErrors), [id, other])
+  api.receipt = async key => ({ id: key, revision: 2 })
+  await model.focusReceipt(other)
+  assert.deepEqual(Object.keys(model.state.refreshErrors), [id])
+  api.label = async () => {}
+  await model.label({ id, revision: 2 }, { module: 'seo', tenantId: 42 })
+  assert.deepEqual(model.state.refreshErrors, {})
+  assert.equal(model.state.needsTargetRefresh, false)
+})
+
+test('only successful operations on the conflicted receipt clear its hint; cancelling removal preserves it', async () => {
+  const previous = globalThis.confirm
+  try {
+    for (const action of ['archive', 'remove', 'unlabel']) {
+      const { api, model } = modelFixture()
+      const row = { id, revision: 1, assignment: { module: 'seo', tenantId: 42 } }
+      api.label = async () => { throw Object.assign(new Error('合成失败'), { code: 'REVISION_CONFLICT' }) }
+      await model.label(row, { module: 'seo', tenantId: 42 })
+      globalThis.confirm = () => false
+      await model.remove(row)
+      assert.equal(model.state.refreshErrors[id], '合成失败')
+      api.archive = api.delete = api.unlabel = async () => { throw new Error('合成失败') }
+      globalThis.confirm = () => true
+      await model[action](row)
+      assert.equal(model.state.refreshErrors[id], '合成失败')
+      api.archive = api.delete = api.unlabel = async () => {}
+      await model[action]({ ...row, id: 'other' })
+      assert.equal(model.state.refreshErrors[id], '合成失败')
+      await model[action](row)
+      assert.deepEqual(model.state.refreshErrors, {})
+    }
+  } finally { globalThis.confirm = previous }
 })
