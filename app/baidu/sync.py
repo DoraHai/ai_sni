@@ -241,6 +241,8 @@ async def sync_keyword_report_range_for_account(
     client = BaiduAPIClient(
         username=baidu_account.baidu_username,
         access_token=decrypt(baidu_account.access_token_encrypted),
+        tenant_id=baidu_account.tenant_id,
+        baidu_account_id=baidu_account.id,
     )
     svc = ReportService(client)
 
@@ -354,6 +356,8 @@ async def sync_keyword_dimension_reports_for_account(
     client = BaiduAPIClient(
         username=baidu_account.baidu_username,
         access_token=decrypt(baidu_account.access_token_encrypted),
+        tenant_id=baidu_account.tenant_id,
+        baidu_account_id=baidu_account.id,
     )
     svc = ReportService(client)
     iso_date = target_date.isoformat()
@@ -414,6 +418,8 @@ async def sync_region_snapshot(
     client = BaiduAPIClient(
         username=baidu_account.baidu_username,
         access_token=decrypt(baidu_account.access_token_encrypted),
+        tenant_id=baidu_account.tenant_id,
+        baidu_account_id=baidu_account.id,
     )
     svc = ReportService(client)
     rows = await svc.get_keyword_province_report(
