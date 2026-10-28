@@ -1,3 +1,4 @@
 # Development and CI test dependencies.
 pytest==8.3.5
 aiosqlite==0.22.1
+-r requirements-sem-phase0.txt

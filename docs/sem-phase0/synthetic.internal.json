@@ -1,0 +1,48 @@
+{
+  "notice": "内部演练/不可上传百度",
+  "schema": "sem-phase0-internal-v1",
+  "synthetic": true,
+  "execution_export_enabled": false,
+  "official_headers": null,
+  "source": "https://bce-cdn.bj.bcebos.com/p3m/pdf/bce-doc/online/SEM/SEM.pdf?timeStamp=1629849600124",
+  "rows": [
+    {
+      "internal_id": "demo-plan",
+      "internal_kind": "campaign",
+      "internal_parent": null,
+      "internal_label": "合成产品线演练计划",
+      "internal_daily_budget_cents": 12345,
+      "evidence": "CampaignService.addCampaign（历史官方API，文件能力待核实）"
+    },
+    {
+      "internal_id": "demo-unit",
+      "internal_kind": "adgroup",
+      "internal_parent": "demo-plan",
+      "internal_label": "合成意图单元",
+      "internal_landing_url": "https://example.invalid/demo",
+      "evidence": "AdgroupService.addAdgroup（历史官方API，文件能力待核实）"
+    },
+    {
+      "internal_id": "demo-word",
+      "internal_kind": "keyword",
+      "internal_parent": "demo-unit",
+      "internal_text": "合成产品演练词",
+      "evidence": "KeywordService.addWord（历史官方API，文件能力待核实）"
+    },
+    {
+      "internal_id": "demo-creative",
+      "internal_kind": "basic_creative",
+      "internal_parent": "demo-unit",
+      "internal_title": "合成演练文案",
+      "internal_description": "仅用于契约自测，所有内容均为虚构。",
+      "evidence": "CreativeService.addCreative（历史官方API，文件能力待核实）"
+    }
+  ],
+  "pending_verification": [
+    "批量文件新建计划/单元/关键词/基础创意",
+    "高级创意各类型",
+    "否词层级和匹配",
+    "预算/地域/时段文件格式",
+    "全部当前表头、枚举、限制、回执"
+  ]
+}
