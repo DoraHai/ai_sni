@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "expiry_review_suggestion",
+    "synthetic": true,
+    "deadline": "2026-11-08T18:00:00+08:00",
+    "due": true,
+    "text": "合成活动到期，请顾问审核是否暂停；不自动执行",
+    "source_refs": [
+      "s-20",
+      "s-21"
+    ],
+    "automatic_pause": false
+  }
+]
