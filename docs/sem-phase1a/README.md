@@ -12,6 +12,14 @@
 
 `production_principal_dependency()`工厂直接依赖现有`require_auth`（JWT签名/期限/角色/会话/撤销检查），不解析裸Header身份、不新增JWT机制或环境开关、不注册路由。**现有advisor_request仍拒绝未开放的新路径和顾问写请求**，本刀未修改、绕过或放宽该门禁。隔离测试在现有允许的`/auth/me`会话路径验证真实JWT→AuthContext→principal；第三刀API全正向用同一LocalGrantPrincipalAdapter合成授权库。真实顾问访问第三刀路由仍被现有门禁拒绝，正式接入需下一刀单独审查，不以本刀适配代码声称已开放。
 
+review11修复：本地和生产适配器在resolve阶段即拒绝空有效账户集合；生产依赖保留既有鉴权/模块/归属检查的HTTPException状态码、detail及headers，仅对ScopeDenied和存储/解析异常返回固定脱敏403。第一刀API回归也复用`tests/sem_phase1a_auth_fixture.py`中的授权库与LocalGrant适配器；直接构造principal仅用于服务/check_scope单元测试。
+
+### 账户绑定运营SOP（本刀无写入口）
+
+0077的独立外键不能保证绑定tenant与账户tenant相等；本刀禁止修改已存在迁移、回填授权或连接生产，故保留此数据库约束缺口。当前读取JOIN要求`g.tenant_id=a.tenant_id`，跨租户脏绑定不会授予权限，无剩余有效绑定时resolve直接拒绝；两种适配器均有回归。
+
+后续获单独授权的provisioning流程必须在同一事务中先锁定并核对用户、账户、tenant与当前未撤销advisor grant，要求账户tenant=绑定tenant、账户active，顾问grant的user/tenant/代次一致，客户tenant一致且advisor_grant_id为空；任何不符拒绝写入并留审计。上线前只读巡检绑定与账户tenant不相等、grant归属不符的记录，发现即停止该批开通，由另获授权的流程处理，不自动修复。本刀未提供或执行此巡检/写入工具；下一刀需设计复合FK或管理端事务校验，再审查接线。
+
 ## PostgreSQL存储与新增迁移
 
 `SQLAlchemyShadowStore(connection_factory)`实现同一ShadowStore协议，典型参数是调用方显式提供的`Engine.begin`。不创建engine、不读取URL/config/.env、不执行DDL，不默认使用app.database全局engine。每请求独立事务；PostgreSQL按plan→preview行锁，内部revision CAS覆盖审计写入，预览消费和规划/审批/审计同事务，任一flush失败全回滚。cleanup的DELETE使用相同行锁，SQLite原实现同样使用BEGIN IMMEDIATE；测试验证清理等待持锁事务。
@@ -32,6 +40,8 @@
 py -3.13 -X utf8 -m pytest -q tests/test_sem_phase0.py tests/test_sem_phase1a.py tests/test_sem_phase1a_slice2.py tests/test_sem_phase1a_slice3.py tests/test_seo_migration_merge.py
 py -3.13 -X utf8 -m app.sem_phase1a.demo_slice3 --output docs/sem-phase1a/samples
 ```
+
+**review11后的完整验收要求**：以上本地切片命令须全部运行，不能以单个文件/筛选子集替代；最终CI还必须运行现有主job的完整`python -m pytest -q tests`，并核对日志中`test_postgres_existing_ci_service_once_concurrency_and_rollback`实际通过而非skip。CI沿用现有显式`SEM_ALERT_TEST_DATABASE_URL`，不修改.github配置。本机无该临时服务时原生PG用例会skip，SQLite结果不代表已验证FOR UPDATE与PG双连接并发。原生PG仅在CI验证；随机schema只允许留在可销毁的`sem_writeback_test`库，随服务销毁，不删应用表。
 
 样例`slice3-auth.internal.json`（部分账户授权/DB角色拒绝）、`slice3-review.internal.json`及`slice3-review.internal.xlsx`（全行演练复核后仍不可执行）、`slice3-persistence.internal.json`（重启与重放拒绝），均为TEMP合成库实际运行结果，无真实凭证。Excel只更新语义与绑定字段，未声称新增原生Excel视觉验收。交接入口见[HANDOFF_INDEX.md](HANDOFF_INDEX.md)。
 

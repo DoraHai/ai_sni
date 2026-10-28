@@ -4,6 +4,7 @@
 - 第三刀实现：`app/sem_phase1a/principals.py`、`production_principals.py`、`postgres_store.py`、`service.py`、`router.py`、`excel.py`。
 - 新增迁移：`migrations/versions/0077_sem_phase1a_shadow.py`；仅代码，未在生产执行。
 - 新增合成测试：`tests/test_sem_phase1a_slice3.py`；真实JWT隔离夹具：`tests/sem_phase1a_session_fixture.py`。
+- review11修复：生产依赖保留既有HTTP错误、两种适配器resolve拒绝空绑定、第一刀API复用`tests/sem_phase1a_auth_fixture.py`；完整测试要求和账户绑定运营SOP见README，逐项修复/建议与最终验证见外部交接新增的“review11修复轮”章节。
 - 样例：[授权](samples/slice3-auth.internal.json)、[演练复核](samples/slice3-review.internal.json)、[重启/重放](samples/slice3-persistence.internal.json)、[内部Excel](samples/slice3-review.internal.xlsx)。
 - 完整本刀交接与逐步状态：工作目录 `D:\SNIPERS国内版\梳理-2026-10\sem-entry-20261027\PHASE1A_SLICE3_HANDOFF.md`、`status10.md`；计划改前备份PLAN.v9.md。
 - 封存副本：`oss://snipers-video-transfer/diag-20261029/sem-phase1a-slice3/`，含PLAN、交接、状态及上述关键样例；最终提交/PR/CI/SHA-256见status10。

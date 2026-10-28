@@ -64,23 +64,35 @@ def test_identity_and_binding_changes_fail_closed(auth_db, sql):
     with closing(sqlite3.connect(auth_db)) as db, db:
         db.execute(sql)
     for identity in (SessionIdentity(1, 'advisor', 101, 10), SessionIdentity(2, 'customer', 101)):
-        if 'id=2' in sql and identity.user_id == 1:
+        if sql.startswith('UPDATE users') and 'id=2' in sql and identity.user_id == 1:
             continue
-        if 'id=1' in sql and identity.user_id == 2:
+        if sql.startswith('UPDATE users') and 'id=1' in sql and identity.user_id == 2:
             continue
         if 'user_id=1' in sql and identity.user_id == 2:
             continue
-        try:
-            who = adapter(auth_db).resolve(identity)
-        except ScopeDenied:
-            continue
-        assert not who.readable_accounts and not who.writable_accounts
+        with pytest.raises(ScopeDenied):
+            adapter(auth_db).resolve(identity)
 
 
 def test_naive_clock_rejected(auth_db):
     with pytest.raises(ScopeDenied, match='时区'):
         LocalGrantPrincipalAdapter(auth_db, clock=lambda: datetime(2026, 10, 29)).resolve(
             SessionIdentity(1, 'advisor', 101, 10))
+
+
+@pytest.mark.parametrize('identity', [SessionIdentity(1, 'advisor', 101, 10),
+                                     SessionIdentity(2, 'customer', 101)])
+def test_empty_account_bindings_denied_at_resolve_and_http(env, auth_db, identity):
+    reader = adapter(auth_db)
+    assert reader.resolve(identity).readable_accounts
+    with closing(sqlite3.connect(auth_db)) as db, db:
+        db.execute('DELETE FROM sem_phase1a_account_grants WHERE user_id=?', (identity.user_id,))
+    with pytest.raises(ScopeDenied, match='账户绑定'):
+        reader.resolve(identity)
+    api = client(env[1], dependency=principal_dependency(reader, lambda: identity))
+    response = api.get(ROOT + '/missing')
+    assert response.status_code == 403
+    assert response.json()['detail']['code'] == 'SCOPE_DENIED'
 
 
 def advisor_api(service, auth_db):
@@ -319,7 +331,8 @@ def test_postgres_existing_ci_service_once_concurrency_and_rollback(tmp_path):
             assert service.read(principal(), pid)['version'] == 4
         await operation(rollback)
         assert await operation(lambda: store.cleanup_previews(preview['expires_at']+1)) == 1
-        # The CI service is disposable. No DROP/DELETE of application tables,
+        # Only the disposable sem_writeback_test service may retain these schemas.
+        # They disappear with the CI service. No DROP/DELETE of application tables,
         # no production URL and no permissions/role grants are used here.
         await engine.dispose()
     asyncio.run(run())

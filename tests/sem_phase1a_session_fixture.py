@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import types
+from unittest.mock import AsyncMock, patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -132,14 +133,42 @@ async def run(directory):
         for sql in ["UPDATE users SET is_active=0 WHERE id=1",
                     "UPDATE roles SET permissions='{}' WHERE id=1",
                     "UPDATE tenant_modules SET status='suspended' WHERE tenant_id=101",
-                    "UPDATE sem_phase1a_account_grants SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=1"]:
+                    "UPDATE tenant_modules SET status='closed' WHERE tenant_id=101",
+                    "UPDATE tenant_modules SET status='trial',expires_at='2000-01-01' WHERE tenant_id=101"]:
             await session.execute(text(sql))
             try:
-                who = await adapter.resolve(ctx, session)
-                assert not who.readable_accounts
+                await adapter.resolve(ctx, session)
+                raise AssertionError('unavailable identity/module accepted')
             except (ScopeDenied, __import__('fastapi').HTTPException):
                 pass
             await session.rollback()
+        # Both roles must fail during resolution, without returning empty principals.
+        for uid, is_advisor in ((1, True), (2, False)):
+            identity = await context(session, token(uid, is_advisor))
+            for sql in [f'DELETE FROM sem_phase1a_account_grants WHERE user_id={uid}',
+                        f'UPDATE sem_phase1a_account_grants SET revoked_at=CURRENT_TIMESTAMP WHERE user_id={uid}',
+                        f'UPDATE sem_phase1a_account_grants SET tenant_id=102 WHERE user_id={uid}']:
+                await session.execute(text(sql))
+                try:
+                    await adapter.resolve(identity, session)
+                    raise AssertionError('empty/invalid bindings accepted')
+                except ScopeDenied:
+                    pass
+                await session.rollback()
+        # An already-issued context cannot conceal the exact guard HTTP errors.
+        dependency = production_principal_dependency()
+        from fastapi import HTTPException
+        for guard in ('app.module_scope.ensure_module_access',
+                      'app.security.sem_identity.ensure_sem_identity_access'):
+            for status in (400, 401, 403):
+                error = HTTPException(status, {'code': f'GUARD_{status}', 'message': 'synthetic guard'},
+                                      headers={'WWW-Authenticate': 'Bearer'})
+                with patch(guard, new=AsyncMock(side_effect=error)):
+                    try:
+                        await dependency(ctx=ctx, session=session)
+                        raise AssertionError('guard error swallowed')
+                    except HTTPException as exc:
+                        assert exc is error
         # Real require_auth still denies phase1a routes, including writes.
         from fastapi import HTTPException
         for method in ('GET', 'POST'):
@@ -173,6 +202,29 @@ async def run(directory):
     # existing advisor guard; this slice never patches or bypasses that guard.
     dependency = production_principal_dependency()
     assert __import__('inspect').signature(dependency).parameters['ctx'].default.dependency is require_auth
+    # The HTTP boundary preserves status, structured detail and response headers;
+    # storage/parser/scope failures still return the fixed, sanitized denial.
+    from fastapi import Depends, HTTPException
+    from sqlalchemy.exc import SQLAlchemyError
+    app = FastAPI()
+    app.dependency_overrides[require_auth] = lambda: object()
+    app.dependency_overrides[unused_session] = lambda: object()
+    @app.get('/synthetic-principal')
+    async def principal_route(who=Depends(dependency)):
+        return {'role': who.role}
+    for status in (400, 401, 403):
+        detail = {'code': f'GUARD_{status}', 'message': 'synthetic guard'}
+        error = HTTPException(status, detail, headers={'WWW-Authenticate': 'Bearer'})
+        with patch.object(ProductionPrincipalAdapter, 'resolve', new=AsyncMock(side_effect=error)):
+            response = TestClient(app).get('/synthetic-principal')
+        assert response.status_code == status and response.json()['detail'] == detail
+        assert response.headers['www-authenticate'] == 'Bearer'
+    for error in (ScopeDenied('never-echo'), SQLAlchemyError('never-echo'),
+                  ValueError('never-echo'), TypeError('never-echo')):
+        with patch.object(ProductionPrincipalAdapter, 'resolve', new=AsyncMock(side_effect=error)):
+            response = TestClient(app).get('/synthetic-principal')
+        assert response.status_code == 403 and response.json()['detail']['code'] == 'SCOPE_DENIED'
+        assert 'never-echo' not in response.text
     await engine.dispose()
 
 with tempfile.TemporaryDirectory(prefix='sem-slice3-session-') as temp:

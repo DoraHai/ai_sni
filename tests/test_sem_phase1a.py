@@ -22,6 +22,8 @@ from app.sem_phase1a.planning import duplicates
 from app.sem_phase1a.router import create_router
 from app.sem_phase1a.service import ShadowService, digest, enable_plan, export_execution
 from app.sem_phase1a.sources import FIXTURES, fixture_adapters
+from app.sem_phase1a.principals import SessionIdentity, principal_dependency
+from sem_phase1a_auth_fixture import auth_db, adapter
 
 
 def principal(role="advisor", accounts=frozenset({(101, 201)})):
@@ -393,15 +395,16 @@ def test_all_execution_functions_unconditionally_closed(function):
         function(approved=True, force=True, mode="live")
 
 
-def client_for(service, who=None):
+def client_for(service, auth_db, identity=SessionIdentity(1, "advisor", 101, 10)):
     app = FastAPI()
-    app.include_router(create_router(service, lambda: who or principal()))
+    dependency = principal_dependency(adapter(auth_db), lambda: identity)
+    app.include_router(create_router(service, dependency))
     return TestClient(app)
 
 
-def test_api_complete_rehearsal(env):
+def test_api_complete_rehearsal(env, auth_db):
     _, service = env
-    client = client_for(service)
+    client = client_for(service, auth_db)
     root = "/api/v1/sem/phase1a/shadow/plans"
     response = client.post(root, json={"tenant_id": 101, "account_id": 201,
                             "page_id": "synthetic-page", "submission_revision": 1})
@@ -428,19 +431,19 @@ def test_api_complete_rehearsal(env):
         assert client.post(f"{root}/{pid}/{path}", json={}).status_code == 404
 
 
-@pytest.mark.parametrize("who", [principal("customer"), principal(accounts=frozenset({(102, 202)})),
-                                 principal(accounts=frozenset())])
-def test_permissions_for_every_api_operation(env, who):
+@pytest.mark.parametrize("identity", [SessionIdentity(2, "customer", 101),
+    SessionIdentity(1, "advisor", 102, 20), SessionIdentity(3, "customer", 102)])
+def test_permissions_for_every_api_operation(env, auth_db, identity):
     _, service = env
     state = generate(service)
     pid = state["plan_id"]
-    client = client_for(service, who)
+    client = client_for(service, auth_db, identity)
     root = "/api/v1/sem/phase1a/shadow/plans"
     assert client.post(root, json={"tenant_id": 101, "account_id": 201,
                        "page_id": "synthetic-page", "submission_revision": 1}).status_code == 403
-    assert client.get(f"{root}/{pid}").status_code == (200 if who.role == "customer" else 403)
+    assert client.get(f"{root}/{pid}").status_code == (200 if identity.user_id == 2 else 403)
     assert client.get(f"{root}/{pid}/excel/advisor").status_code == 403
-    assert client.get(f"{root}/{pid}/expiry-suggestions").status_code == (200 if who.role == "customer" else 403)
+    assert client.get(f"{root}/{pid}/expiry-suggestions").status_code == (200 if identity.user_id == 2 else 403)
     assert client.post(f"{root}/{pid}/rulings", json={"expected_version": 2, "reason": "合成"}).status_code == 403
     assert client.post(f"{root}/{pid}/approvals", json={"expected_version": 2,
                         "row_ids": ["r-1"], "reason": "合成"}).status_code == 403
@@ -449,10 +452,10 @@ def test_permissions_for_every_api_operation(env, who):
     assert client.post(f"{root}/{pid}/previews/advisor", files={"file": ("sample.xlsx", b"synthetic")}).status_code == 403
 
 
-def test_api_invalid_inputs_and_stale_conflict(env):
+def test_api_invalid_inputs_and_stale_conflict(env, auth_db):
     _, service = env
     state = generate(service)
-    client = client_for(service)
+    client = client_for(service, auth_db)
     root = "/api/v1/sem/phase1a/shadow/plans"
     assert client.get(root+"/missing").status_code == 404
     assert client.post(f"{root}/{state['plan_id']}/rulings", json={"expected_version": 1, "reason": "过期"}).status_code == 409

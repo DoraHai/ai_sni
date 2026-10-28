@@ -69,6 +69,8 @@ class ProductionPrincipalAdapter:
             + ("g.advisor_grant_id=:gid" if advisor else "g.advisor_grant_id IS NULL")),
             {'tid': ctx.tenant_id, 'uid': ctx.user_id, 'gid': grant_id})).all()
         accounts = frozenset((ctx.tenant_id, row[0]) for row in rows)
+        if not accounts:
+            raise ScopeDenied('当前身份无有效SEM账户绑定')
         return AdvisorPrincipal(str(ctx.user_id), 'advisor' if advisor else 'customer',
                                 accounts if advisor else frozenset(), accounts)
 
@@ -81,6 +83,6 @@ def production_principal_dependency():
     async def resolve(ctx=Depends(require_auth), session=Depends(get_session)):
         try:
             return await ProductionPrincipalAdapter().resolve(ctx, session)
-        except (ScopeDenied, SQLAlchemyError, ValueError, TypeError, HTTPException):
+        except (ScopeDenied, SQLAlchemyError, ValueError, TypeError):
             raise HTTPException(403, {'code': 'SCOPE_DENIED', 'message': '身份或SEM账户授权不可用'}) from None
     return resolve

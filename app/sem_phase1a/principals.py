@@ -81,6 +81,8 @@ class LocalGrantPrincipalAdapter:
                     (identity.tenant_id, identity.user_id, identity.role, identity.grant_id, identity.role)))
         except (sqlite3.Error, ValueError, TypeError):
             raise ScopeDenied("授权数据不可用") from None
+        if not accounts:
+            raise ScopeDenied("当前身份无有效SEM账户绑定")
         return AdvisorPrincipal(str(identity.user_id), identity.role,
                                 accounts if identity.role == "advisor" else frozenset(), accounts)
 
