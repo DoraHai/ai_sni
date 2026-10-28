@@ -9,6 +9,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.sem_phase1a.contracts import PlanRow, WARNING
+from app.sem_phase1a.errors import ExcelError, ShadowError
 
 MAX_XLSX_BYTES = 2 * 1024 * 1024
 HEADERS = ["内部行ID", "内部父行ID", "内部类型", "内部内容（可改）", "内部预算分（可改）",
@@ -53,7 +54,7 @@ def _append(sheet, values):
 
 def write_workbook(view, audience):
     if audience not in {"advisor", "customer"}:
-        raise ValueError("仅顾问或客户演练样例")
+        raise ExcelError("仅顾问或客户演练样例")
     book = Workbook()
     sheet = book.active
     sheet.title = SHEETS[0]
@@ -115,24 +116,24 @@ def write_workbook(view, audience):
 
 def _safe_archive(data):
     if not data or len(data) > MAX_XLSX_BYTES:
-        raise ValueError("内部Excel大小超限或为空")
+        raise ExcelError("内部Excel大小超限或为空")
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             members = archive.infolist()
             if len(members) > 100 or sum(i.file_size for i in members) > 10 * 1024 * 1024:
-                raise ValueError("内部Excel解压大小超限")
+                raise ExcelError("内部Excel解压大小超限")
             for item in members:
                 name = item.filename.lower()
                 if (item.flag_bits & 1 or ".." in name or "vba" in name or "externallink" in name
                         or name.startswith(("/", "\\"))):
-                    raise ValueError("内部Excel含不允许的成员")
+                    raise ExcelError("内部Excel含不允许的成员")
                 if name.endswith((".xml", ".rels")):
                     content = archive.read(item).lower()
                     if any(token in content for token in (b"<!doctype", b"<!entity", b'targetmode="external"',
                                                            b"targetmode='external'")):
-                        raise ValueError("内部Excel禁止外部引用/实体")
+                        raise ExcelError("内部Excel禁止外部引用/实体")
     except (zipfile.BadZipFile, RuntimeError, OSError):
-        raise ValueError("不是有效内部XLSX") from None
+        raise ExcelError("不是有效内部XLSX") from None
 
 
 def parse_workbook(data, view, audience):
@@ -140,42 +141,46 @@ def parse_workbook(data, view, audience):
     try:
         book = load_workbook(io.BytesIO(data), data_only=False, keep_links=False)
     except Exception:
-        raise ValueError("内部Excel无法读取") from None
+        raise ExcelError("内部Excel无法读取") from None
     try:
         if audience not in {"advisor", "customer"} or book.sheetnames != SHEETS:
-            raise ValueError("内部Excel页签或用途不匹配")
+            raise ExcelError("内部Excel页签或用途不匹配")
         for ws in book:
             if ws.max_row > 1100 or ws.max_column > 8:
-                raise ValueError("内部Excel维度超限")
+                raise ExcelError("内部Excel维度超限")
             for row in ws:
                 if any(cell.data_type == "f" or cell.hyperlink for cell in row):
-                    raise ValueError("内部Excel禁止公式/超链接")
+                    raise ExcelError("内部Excel禁止公式/超链接")
         meta = [list(r) for r in book[SHEETS[2]].values]
         # openpyxl可能把尾部空列补齐；严格检查且不容许重复绑定字段。
         if meta != _meta(view, audience):
-            raise ValueError("演练规划ID/版本/hash/用途绑定不匹配")
+            raise ExcelError("演练规划ID/版本/hash/用途绑定不匹配")
         sources = [list(r) for r in book[SHEETS[1]].values]
         expected_sources = [[WARNING] + [None]*6,
                             ["来源ID", "字段", "合成原文", "来源类型", "原文SHA-256", "定位/版本", "裁定"]] + _source_rows(view)
         if sources != expected_sources:
-            raise ValueError("来源页不可篡改")
+            raise ExcelError("来源页不可篡改")
         ws = book[SHEETS[0]]
         if (ws.max_row != len(view["rows"])+4 or ws.max_column != len(HEADERS)
                 or ws.cell(1, 1).value != WARNING or [c.value for c in ws[4]] != HEADERS):
-            raise ValueError("内部表头/行数量不匹配，禁止增删行")
+            raise ExcelError("内部表头/行数量不匹配，禁止增删行")
         result = []
         for index, old in enumerate(view["rows"], 5):
             values = [c.value for c in ws[index]]
             expected = _review_row(old, view)
             if any(values[col] != expected[col] for col in (0, 1, 2, 5, 6, 7)):
-                raise ValueError("只允许修改内容和预算列，不可篡改身份、来源、核实或批准")
+                raise ExcelError("只允许修改内容和预算列，不可篡改身份、来源、核实或批准")
             if not isinstance(values[3], str) or not values[3].strip():
-                raise ValueError("内部内容须为非空文本")
+                raise ExcelError("内部内容须为非空文本")
+            budget_row = old["kind"] in {"project", "campaign", "unit"}
+            if ((budget_row and (type(values[4]) is not int or values[4] <= 0))
+                    or (not budget_row and values[4] is not None)):
+                raise ShadowError("BUDGET_INVALID", "内部整数分预算不满足契约")
             updated = {**old, "text": values[3], "budget_cents": values[4]}
             try:
                 row = PlanRow.model_validate(updated)
             except Exception:
-                raise ValueError("内部行内容/整数分预算不满足契约") from None
+                raise ExcelError("内部行内容/整数分预算不满足契约") from None
             if (row.text, row.budget_cents) != (old["text"], old["budget_cents"]):
                 updated = row.model_dump()
                 updated["verification"] = "pending_verification"

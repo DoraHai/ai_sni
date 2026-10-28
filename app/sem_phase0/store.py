@@ -28,11 +28,14 @@ class AdvisorPrincipal:
     role: str
     # 已验证账户归属于tenant，顾问对该账户有SEM提交权限，且账户SEM未暂停。
     writable_accounts: frozenset[tuple[int, int]]
+    readable_accounts: frozenset[tuple[int, int]] = frozenset()
 
 
-def check_scope(principal: AdvisorPrincipal, tenant_id: int, account_id: int):
-    if (principal.role != "advisor" or not principal.actor_id.strip()
-            or (tenant_id, account_id) not in principal.writable_accounts):
+def check_scope(principal: AdvisorPrincipal, tenant_id: int, account_id: int, *, write=True):
+    allowed = (principal.writable_accounts if write else
+               principal.readable_accounts | (principal.writable_accounts if principal.role == "advisor" else frozenset()))
+    if ((write and principal.role != "advisor") or principal.role not in {"advisor", "customer"}
+            or not principal.actor_id.strip() or (tenant_id, account_id) not in allowed):
         raise ScopeDenied("无该租户账户的顾问提交权限")
 
 
@@ -104,7 +107,7 @@ class SubmissionStore:
 
     def read(self, principal: AdvisorPrincipal, tenant: int, account: int, page: str,
              revision: int) -> dict | None:
-        check_scope(principal, tenant, account)
+        check_scope(principal, tenant, account, write=False)
         with closing(self._connect()) as db:
             row = db.execute("SELECT actor,submitted_at,payload,payload_sha256 FROM phase0_submissions "
                              "WHERE tenant=? AND account=? AND page=? AND revision=?",
@@ -114,7 +117,17 @@ class SubmissionStore:
             shots = db.execute("SELECT ordinal,metadata FROM phase0_screenshots "
                                "WHERE tenant=? AND account=? AND page=? AND revision=? ORDER BY ordinal",
                                (tenant, account, page, revision)).fetchall()
-        return {"submitted_by": row[0], "submitted_at": row[1], "payload": json.loads(row[2]),
+        # Stored data is untrusted too: validate contract, digest and scope bindings on every read.
+        try:
+            payload = LandingSubmission.model_validate_json(row[2])
+            valid_hash = hashlib.sha256(row[2].encode("utf-8")).hexdigest() == row[3]
+            valid_scope = (payload.tenant_id, payload.account_id, payload.landing_page_id,
+                           payload.expected_revision + 1) == (tenant, account, page, revision)
+            if not valid_hash or not valid_scope:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("阶段0存储校验失败") from None
+        return {"submitted_by": row[0], "submitted_at": row[1], "payload": payload.model_dump(mode="json"),
                 "payload_sha256": row[3], "revision": revision, "state": "blocked_draft",
                 "customer_confirmation": "pending", "execution_export_enabled": False,
                 "screenshots": [{"ordinal": n, **json.loads(meta)} for n, meta in shots]}

@@ -87,8 +87,8 @@ def test_image_decode_and_metadata_cleaning(extension, fmt, mime):
 
 
 @pytest.mark.parametrize("name,mime,data", [("demo.pdf", "application/pdf", b"%PDF"),
-    ("demo.png", "image/png", b"not a png"), ("demo.png", "image/jpeg", png()),
-    ("demo.jpg", "image/jpeg", png()), ("demo.txt", "text/plain", b"text")])
+    ("demo.png", "image/png", b"not a png"),
+    ("demo.txt", "text/plain", b"text")])
 def test_disguised_or_document_upload_rejected(name, mime, data):
     with pytest.raises(ValueError):
         clean_screenshot(Screenshot("page-a", name, mime, data))

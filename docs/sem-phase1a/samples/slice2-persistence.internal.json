@@ -1,0 +1,135 @@
+{
+  "synthetic": true,
+  "restart_equal": true,
+  "preview": {
+    "preview_id": "6d728da03cf246bb814e805ed407c913",
+    "plan_id": "59f9f73fcf174f23aae2ed6f2ea9ea88",
+    "base_version": 3,
+    "audience": "advisor",
+    "changes": [],
+    "p5": {
+      "passed": true,
+      "issues": [],
+      "scope": "batch_and_existing_synthetic_assets"
+    },
+    "p6": {
+      "rules_version": "phase1a-fixture-only-v1",
+      "passed": false,
+      "issues": [
+        {
+          "rule": "platform_limits",
+          "row_id": null,
+          "reason": "平台限制待核实",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "bundle-root",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "campaign-1",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p1-r-3",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p1-r-4",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p1-r-5",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p1-r-6",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p2-r-3",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p2-r-4",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p2-r-5",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p2-r-6",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "campaign-3",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p3-r-3",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p3-r-4",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p3-r-5",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "source_complete",
+          "row_id": "p3-r-6",
+          "reason": "来源缺失或未复核",
+          "blocking": true
+        },
+        {
+          "rule": "online_facts",
+          "row_id": null,
+          "reason": "占位检查未知或未通过",
+          "blocking": true
+        }
+      ],
+      "execution_export_enabled": false,
+      "customer_confirmation": "pending"
+    },
+    "rehearsal_only": true,
+    "customer_confirmation": "pending",
+    "applied": false,
+    "expires_at": 1793208936.82144
+  },
+  "applied_version": 4,
+  "replay_code": "VERSION_CONFLICT",
+  "apply_audit_count": 1,
+  "customer_confirmation": "pending",
+  "execution_export_enabled": false
+}
