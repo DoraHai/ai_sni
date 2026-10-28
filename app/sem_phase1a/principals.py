@@ -38,15 +38,17 @@ class LocalGrantPrincipalAdapter:
         if not isinstance(identity, SessionIdentity) or identity.role not in {"advisor", "customer"}:
             raise ScopeDenied("身份未获准")
         now = self.clock()
-        if now.utcoffset() is None or identity.tenant_id is None:
+        if not isinstance(now, datetime) or now.utcoffset() is None:
+            raise ScopeDenied("授权时钟必须带时区")
+        if identity.tenant_id is None:
             raise ScopeDenied("须选择已授权客户")
         try:
             # mode=ro forbids writes and creating a missing database; no cache across requests.
             with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("PRAGMA query_only=ON")
-                user = db.execute("SELECT is_active,locked_until,tenant_id FROM users WHERE id=?",
+                user = db.execute("SELECT is_active,locked_until,tenant_id,role FROM users WHERE id=?",
                                   (identity.user_id,)).fetchone()
-                if not user or user[0] != 1:
+                if not user or user[0] != 1 or user[3] != identity.role:
                     raise ScopeDenied("身份停用")
                 if user[1]:
                     until = datetime.fromisoformat(user[1])
@@ -72,7 +74,11 @@ class LocalGrantPrincipalAdapter:
                         or (module[1] and date.fromisoformat(module[1]) < now.date())):
                     raise ScopeDenied("SEM暂停、关闭、未开通或过期")
                 accounts = frozenset((identity.tenant_id, r[0]) for r in db.execute(
-                    "SELECT id FROM baidu_accounts WHERE tenant_id=? AND status='active'", (identity.tenant_id,)))
+                    "SELECT a.id FROM baidu_accounts a JOIN sem_phase1a_account_grants g ON g.account_id=a.id "
+                    "AND g.tenant_id=a.tenant_id WHERE a.tenant_id=? AND a.status='active' "
+                    "AND g.user_id=? AND g.revoked_at IS NULL "
+                    "AND ((?='advisor' AND g.advisor_grant_id=?) OR (?='customer' AND g.advisor_grant_id IS NULL))",
+                    (identity.tenant_id, identity.user_id, identity.role, identity.grant_id, identity.role)))
         except (sqlite3.Error, ValueError, TypeError):
             raise ScopeDenied("授权数据不可用") from None
         return AdvisorPrincipal(str(identity.user_id), identity.role,

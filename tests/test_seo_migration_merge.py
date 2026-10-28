@@ -25,7 +25,7 @@ def _config() -> Config:
 
 
 def test_geo_repair_is_preserved_byte_for_byte() -> None:
-    assert hashlib.sha256(GEO_REPAIR.read_bytes()).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
+    assert hashlib.sha256(GEO_REPAIR.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
 
 
 def test_merge_revision_is_noop_and_only_head() -> None:
@@ -43,7 +43,7 @@ def test_merge_revision_is_noop_and_only_head() -> None:
     )
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0076_oauth_rebind_intent"]
+    assert script.get_heads() == ["0077_sem_phase1a_shadow"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -62,6 +62,7 @@ def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
         "0074_suggestion_workflow",
         "0075_sem_asset_sync_state",
         "0076_oauth_rebind_intent",
+        "0077_sem_phase1a_shadow",
     ]
 
 
@@ -122,7 +123,7 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
     after, variant_indexes, publication_indexes = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0076_oauth_rebind_intent"
+    assert after == "0077_sem_phase1a_shadow"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

@@ -60,12 +60,15 @@ def run(output):
         with closing(sqlite3.connect(auth_path)) as db, db:
             db.executescript("""
                 CREATE TABLE tenants(id INTEGER PRIMARY KEY);
-                CREATE TABLE users(id INTEGER PRIMARY KEY,is_active INTEGER,locked_until TEXT,tenant_id INTEGER);
+                CREATE TABLE users(id INTEGER PRIMARY KEY,is_active INTEGER,locked_until TEXT,tenant_id INTEGER,role TEXT);
                 CREATE TABLE advisor_tenant_grants(id INTEGER PRIMARY KEY,user_id INTEGER,tenant_id INTEGER,revoked_at TEXT);
                 CREATE TABLE tenant_modules(tenant_id INTEGER,module_code TEXT,status TEXT,expires_at TEXT);
                 CREATE TABLE baidu_accounts(id INTEGER PRIMARY KEY,tenant_id INTEGER,status TEXT);
+                CREATE TABLE sem_phase1a_account_grants(user_id INTEGER,tenant_id INTEGER,account_id INTEGER,
+                    advisor_grant_id INTEGER,revoked_at TEXT);
+                INSERT INTO sem_phase1a_account_grants VALUES(1,101,201,10,NULL),(2,101,201,NULL,NULL);
                 INSERT INTO tenants VALUES(101);
-                INSERT INTO users VALUES(1,1,NULL,NULL),(2,1,NULL,101);
+                INSERT INTO users VALUES(1,1,NULL,NULL,'advisor'),(2,1,NULL,101,'customer');
                 INSERT INTO advisor_tenant_grants VALUES(10,1,101,NULL);
                 INSERT INTO tenant_modules VALUES(101,'sem','active',NULL);
                 INSERT INTO baidu_accounts VALUES(201,101,'active');

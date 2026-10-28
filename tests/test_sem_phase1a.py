@@ -25,7 +25,7 @@ from app.sem_phase1a.sources import FIXTURES, fixture_adapters
 
 
 def principal(role="advisor", accounts=frozenset({(101, 201)})):
-    return AdvisorPrincipal("synthetic-advisor", role, accounts)
+    return AdvisorPrincipal("synthetic-advisor", role, accounts if role == "advisor" else frozenset(), accounts)
 
 
 def payload(**changes):
@@ -438,9 +438,9 @@ def test_permissions_for_every_api_operation(env, who):
     root = "/api/v1/sem/phase1a/shadow/plans"
     assert client.post(root, json={"tenant_id": 101, "account_id": 201,
                        "page_id": "synthetic-page", "submission_revision": 1}).status_code == 403
-    assert client.get(f"{root}/{pid}").status_code == 403
+    assert client.get(f"{root}/{pid}").status_code == (200 if who.role == "customer" else 403)
     assert client.get(f"{root}/{pid}/excel/advisor").status_code == 403
-    assert client.get(f"{root}/{pid}/expiry-suggestions").status_code == 403
+    assert client.get(f"{root}/{pid}/expiry-suggestions").status_code == (200 if who.role == "customer" else 403)
     assert client.post(f"{root}/{pid}/rulings", json={"expected_version": 2, "reason": "合成"}).status_code == 403
     assert client.post(f"{root}/{pid}/approvals", json={"expected_version": 2,
                         "row_ids": ["r-1"], "reason": "合成"}).status_code == 403
