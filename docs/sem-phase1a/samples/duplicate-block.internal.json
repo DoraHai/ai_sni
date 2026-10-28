@@ -1,0 +1,87 @@
+{
+  "preview_id": "72ded101d7204df192fc284568a76930",
+  "plan_id": "f553ff7fc2444445bb82568d4979f2b7",
+  "base_version": 2,
+  "audience": "advisor",
+  "changes": [
+    {
+      "row_id": "r-4",
+      "field": "text",
+      "before": "合成滤芯",
+      "after": "合成旧型号滤芯"
+    }
+  ],
+  "p5": {
+    "passed": false,
+    "issues": [
+      {
+        "rule": "exact_duplicate",
+        "row_id": "r-4",
+        "matches": [
+          "synthetic-existing-1"
+        ],
+        "blocking": true
+      }
+    ],
+    "scope": "batch_and_existing_synthetic_assets"
+  },
+  "p6": {
+    "rules_version": "phase1a-fixture-only-v1",
+    "passed": false,
+    "issues": [
+      {
+        "rule": "platform_limits",
+        "row_id": null,
+        "reason": "平台限制待核实",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-2",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-3",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-4",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-5",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-6",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-7",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "online_facts",
+        "row_id": null,
+        "reason": "占位检查未知或未通过",
+        "blocking": true
+      }
+    ],
+    "execution_export_enabled": false,
+    "customer_confirmation": "pending"
+  },
+  "rehearsal_only": true,
+  "customer_confirmation": "pending",
+  "applied": false
+}

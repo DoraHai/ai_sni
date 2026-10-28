@@ -1,0 +1,4 @@
+假截图合成OCR文字，不调用OCR引擎；截图编号synthetic-shot-1，区域whole。
+product: 合成星河滤芯
+benefit: 合成可替换滤芯服务
+keywords: 合成滤芯,合成滤芯咨询
