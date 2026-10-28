@@ -211,7 +211,7 @@ def test_customer_preview_never_confirmation_or_apply(env):
 
 
 @pytest.mark.parametrize("text,rule", [("合成旧型号滤芯", "exact_duplicate"), ("合成滤芯咨询", "exact_duplicate"),
-                                     ("合成免费维修咨询", "negative_overlap")])
+                                     ("合成免费维修 咨询", "negative_overlap")])
 def test_edits_recheck_and_hard_block_approval(env, text, rule):
     _, service = env
     state = generate(service)

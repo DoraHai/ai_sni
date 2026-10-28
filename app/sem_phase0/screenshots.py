@@ -1,4 +1,4 @@
-"""只处理本地PNG/JPEG字节；不访问图片内URL，不调用OCR。"""
+"""只处理本地PNG/JPEG/WebP字节；不访问图片内URL，不调用OCR。"""
 from __future__ import annotations
 
 import hashlib
@@ -27,18 +27,24 @@ def clean_screenshot(item: Screenshot) -> tuple[bytes, dict]:
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     suffix = PurePath(item.filename).suffix.lower()
-    expected = {".png": ("PNG", "image/png"), ".jpg": ("JPEG", "image/jpeg"),
-                ".jpeg": ("JPEG", "image/jpeg")}.get(suffix)
-    if not expected or expected[1] != item.content_type or not 0 < len(item.data) <= MAX_IMAGE_BYTES:
-        raise ValueError("截图类型/MIME/大小不符合内部输入契约")
+    formats = {"PNG": ({".png"}, "image/png"), "JPEG": ({".jpg", ".jpeg"}, "image/jpeg"),
+               "WEBP": ({".webp"}, "image/webp")}
+    if not 0 < len(item.data) <= MAX_IMAGE_BYTES:
+        raise ValueError("截图大小不符合内部输入契约")
+    notices = []
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(io.BytesIO(item.data)) as image:
-                if (image.format != expected[0] or getattr(image, "n_frames", 1) != 1
+                if (image.format not in formats or getattr(image, "n_frames", 1) != 1
                         or image.width * image.height > MAX_PIXELS
                         or max(image.size) > MAX_EDGE):
                     raise ValueError("截图签名、帧数或像素限制不符合契约")
+                suffixes, mime = formats[image.format]
+                if suffix not in suffixes:
+                    notices.append("EXTENSION_MISMATCH")
+                if (item.content_type or "").lower() != mime:
+                    notices.append("MIME_MISMATCH")
                 image.verify()
             with Image.open(io.BytesIO(item.data)) as image:
                 image.load()
@@ -55,7 +61,7 @@ def clean_screenshot(item: Screenshot) -> tuple[bytes, dict]:
                 return data, {"original_sha256": hashlib.sha256(item.data).hexdigest(),
                               "clean_sha256": hashlib.sha256(data).hexdigest(),
                               "width": clean.width, "height": clean.height,
-                              "mime": "image/png", "ocr_status": "not_connected"}
+                              "mime": "image/png", "warnings": notices, "ocr_status": "not_connected"}
     except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError,
             Image.DecompressionBombWarning):
-        raise ValueError("截图无法安全解码，请重交PNG/JPEG") from None
+        raise ValueError("截图无法安全解码，请重交PNG/JPEG/WebP") from None
