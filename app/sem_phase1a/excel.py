@@ -21,7 +21,10 @@ def _meta(view, audience):
     return [["schema", "sem-shadow-slice1-v1"], ["warning", WARNING], ["plan_id", view["plan_id"]],
             ["version", view["version"]], ["plan_sha256", view["plan_sha256"]],
             ["submission_sha256", view["submission_sha256"]], ["audience", audience],
-            ["mode", "rehearsal"], ["execution_export_enabled", False], ["customer_confirmation", "pending"]]
+            ["mode", "rehearsal"], ["execution_export_enabled", False], ["customer_confirmation", "pending"],
+            ["executable", False], ["go_live_allowed", False],
+            ["review_status_label", view["review_status_label"]],
+            ["rehearsal_only_blockers", json.dumps(view["rehearsal_only_blockers"], ensure_ascii=False)]]
 
 
 def _source_rows(view):
@@ -36,7 +39,7 @@ def _verification(row):
 def _review_row(row, view):
     return [row["row_id"], row["parent_id"], row["kind"], row["text"], row["budget_cents"],
             _verification(row), json.dumps(row["source_refs"], ensure_ascii=False),
-            "已演练复核" if row["row_id"] in view["approvals"] else "待顾问逐项复核"]
+            "演练复核完成，不可执行、不可上线" if row["row_id"] in view["approvals"] else "待顾问逐项复核"]
 
 
 def _literal(cell, value):
