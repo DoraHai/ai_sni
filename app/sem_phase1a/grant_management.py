@@ -3,7 +3,7 @@
 No engine, URL, config, production wiring or new role definitions. Every service
 entry rechecks the existing platform-admin policy against locked database rows.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
@@ -78,6 +78,19 @@ class AccountGrantService:
         account = await self._row(db, 'SELECT id,tenant_id,status FROM baidu_accounts WHERE id=:id', {'id': account_id})
         if tenant is None or account is None or account['tenant_id'] != tenant_id:
             raise GrantError('GRANT_ACCOUNT_SCOPE_INVALID', 422)
+        from app.module_scope import module_is_available
+        # Use the existing SEM availability policy, with the module row locked
+        # in this same transaction. Administrators cannot bypass a suspension;
+        # listing and revocation follow the same gate as granting.
+        module = await self._row(db, 'SELECT status,expires_at FROM tenant_modules '
+            'WHERE tenant_id=:tid AND module_code=:code', {'tid': tenant_id, 'code': 'sem'})
+        if module is None:
+            raise GrantError('GRANT_MODULE_UNAVAILABLE', 403)
+        expires = module['expires_at']
+        if isinstance(expires, str):
+            expires = date.fromisoformat(expires)
+        if not module_is_available(SimpleNamespace(status=module['status'], expires_at=expires)):
+            raise GrantError('GRANT_MODULE_UNAVAILABLE', 403)
         if active and account['status'] != 'active':
             raise GrantError('GRANT_ACCOUNT_INACTIVE', 422)
 

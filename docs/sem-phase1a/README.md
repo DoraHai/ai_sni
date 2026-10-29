@@ -22,6 +22,10 @@
 
 重复相同有效授权/重复撤销不新增审计或代次。首次授予generation=1，撤销保持代次，再授予递增；顾问tenant grant变代次时必须绑定新grant_id。绑定变更与审计（actor/user/tenant/account/advisor_grant_id/generation/action/UTC时间）同事务，审计失败全回滚；无输入理由/名称字段，不回显不可信输入或底层异常。按账户锁串行化首次授予/撤销/重授；SQLite在读取前取得写锁。撤销后下次principal解析立即失去该账户，不跨请求缓存。撤销允许目标已变角色/停用或账户已归档，避免无法收回旧绑定。
 
+review14修复：列出、授予（含幂等请求）和撤销均在同事务读取并锁定对应`tenant_modules`的SEM记录，复用现有`module_is_available`策略：仅active/trial且未过期（含到期当天）可用；suspended/closed/过期/缺失一律403 `GRANT_MODULE_UNAVAILABLE`，两类管理员及直接服务调用一致，拒绝时绑定/代次/审计不变。账户归档仍可撤销的前提是SEM模块可用；挂起期间全部管理操作关闭，恢复后再操作。
+
+审计运营SOP：`sem_phase1a_grant_audit`当前只有account单列FK，没有(account_id,tenant_id)复合约束，不能声称数据库会拒绝审计跨租户写入。审计只允许由`AccountGrantService`在同事务核对账户tenant后随绑定变更写入；禁止脚本/直接SQL/其他服务绕过此入口创建或改写审计。若后续需要其他写入口，须先单独审查新增迁移及复合约束，并补跨tenant拒绝测试；本轮不改0078、不执行生产SQL。
+
 错误码：未登录401；非平台管理员403（现有require_admin）；服务复核拒绝`GRANT_ADMIN_REQUIRED`/`GRANT_IDENTITY_UNAVAILABLE`/`GRANT_ROLE_INVALID`（403）；账户/目标租户/角色/active校验422；顾问授权代次无效`GRANT_ADVISOR_GENERATION_INVALID`（409）；数据库完整性冲突`GRANT_CONFLICT`（409）；存储/解析不可用`GRANT_STORAGE_UNAVAILABLE`（503）；请求契约422/`CONTRACT_INVALID`。均为固定文案。
 
 ## 验证、挂载阻塞与下一刀
@@ -99,7 +103,7 @@ py -3.13 -X utf8 -m app.sem_phase1a.demo_slice3 --output docs/sem-phase1a/sample
 
 规划、来源、裁定、审批、历史、审计和预览均写入独立SQLite；服务没有跨请求规划/预览缓存。每次操作`BEGIN IMMEDIATE`，按需加载记录，提交时以内部storage revision做CAS更新；它覆盖审计/审批等不改变内容版本的写入。内容修改另检查客户端`expected_version`并递增规划版本。多连接/多进程同预览竞争只有一次成功；预览消费标记、规划版本/行、清空旧审批及审计在同一事务提交，任意提交错误全部回滚。SQLite是本机演练持久化，不宣称分布式或生产高可用。
 
-预览默认TTL=3600秒，可通过构造参数注入测试时钟/TTL，返回`expires_at`（UTC Unix秒）。应用时检查过期；`cleanup_previews()`删除到期预览，创建规划或预览时也执行清理。删除不影响规划中的审计。没有后台任务或生产调度器。
+预览默认TTL=3600秒，可通过构造参数注入测试时钟/TTL，返回`expires_at`（UTC Unix秒）。应用时检查过期；`cleanup_previews()`删除到期预览，创建规划或预览时也执行清理。删除不影响规划中的审计。没有后台任务或生产调度器。此段为第二刀历史说明；PG的`FOR UPDATE SKIP LOCKED`与SQLite写锁以文首第四刀第1条为准。
 
 每次读取规划，检查所有引用页的阶段0版本、hash及新版本；任一页有新版本即409，必须重建。phase0读取时也重验LandingSubmission、SHA-256、tenant/account/page与revision绑定；存储脏数据拒绝。返回值均为独立快照。
 

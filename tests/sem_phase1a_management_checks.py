@@ -1,7 +1,10 @@
 """Executed only inside the isolated real-session fixture (no global DB/config)."""
 import importlib.util
+from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -117,6 +120,48 @@ async def run_checks(factory, token):
             assert (101,204) not in (await ProductionPrincipalAdapter().resolve(ctx, session)).readable_accounts
         response = await api.post(root, json=body, headers=admin)
         assert response.json()['grant']['generation'] == 2 and await count() == 3
+        # The current module state is checked on every HTTP and service call,
+        # including idempotent grants, revocation and listing. Both privileged
+        # roles must be denied before any binding or audit mutation.
+        async def snapshot():
+            async with factory() as session:
+                return tuple([(await session.execute(text(query))).all() for query in (
+                    'SELECT * FROM sem_phase1a_account_grants ORDER BY user_id,account_id',
+                    'SELECT * FROM sem_phase1a_grant_audit ORDER BY id')])
+        before_module_checks = await snapshot()
+        for status, expires in (('suspended', None), ('closed', None), ('active', date.today()-timedelta(days=1)),
+                                ('trial', date.today()-timedelta(days=1)), (None, None)):
+            async with factory() as session, session.begin():
+                if status is None:
+                    await session.execute(text("DELETE FROM tenant_modules WHERE tenant_id=101 AND module_code='sem'"))
+                else:
+                    await session.execute(text("UPDATE tenant_modules SET status=:status,expires_at=:expires "
+                        "WHERE tenant_id=101 AND module_code='sem'"), {'status':status,'expires':expires})
+            for headers, uid, name, perms in ((admin,9,'管理员',ALL_EDIT), (platform,8,'合成平台管理员',
+                                             {'settings.accounts':'edit','settings.customers':'edit'})):
+                for path, method, data in ((root+'?tenant_id=101','GET',None), (root,'POST',body),
+                                          (root+'/revoke','POST',{'tenant_id':101,'user_id':1})):
+                    response = await api.request(method,path,json=data,headers=headers)
+                    assert response.status_code == 403
+                    assert response.json()['detail'] == {'code':'GRANT_MODULE_UNAVAILABLE','message':'账户授权检查未通过'}
+                direct = AuthContext(uid,'',name,None,permissions=perms)
+                for operation in (lambda: service.list_grants(direct,101,204),
+                                  lambda: service.change(direct,101,204,1,10),
+                                  lambda: service.change(direct,101,204,1,revoke=True)):
+                    with pytest.raises(ShadowError) as caught:
+                        await operation()
+                    assert caught.value.code == 'GRANT_MODULE_UNAVAILABLE' and caught.value.status == 403
+            assert await snapshot() == before_module_checks
+        await sql("INSERT INTO tenant_modules(id,tenant_id,module_code,status) VALUES(1,101,'sem','active')")
+        # Available trial and expiry on today's boundary match the shared policy.
+        for status, expires in (('trial',None), ('trial',date.today()), ('active',date.today()), ('active',None)):
+            async with factory() as session, session.begin():
+                await session.execute(text("UPDATE tenant_modules SET status=:status,expires_at=:expires "
+                    "WHERE tenant_id=101 AND module_code='sem'"), {'status':status,'expires':expires})
+            response = await api.post(root,json=body,headers=admin)
+            assert response.status_code == 200 and not response.json()['changed']
+            assert (await api.get(root+'?tenant_id=101',headers=platform)).status_code == 200
+            assert await snapshot() == before_module_checks
         # Customer grants are read-only through the production adapter.
         response = await api.post(root, json={'tenant_id':101,'user_id':2}, headers=admin)
         assert response.status_code == 200
