@@ -6,7 +6,7 @@
 
 ## review12三项与建议
 
-1. `SQLAlchemyShadowStore.cleanup_previews`在同事务内以`FOR UPDATE SKIP LOCKED`选中到期预览再删除。apply仍按plan→preview锁定；清理跳过任何被读/apply持锁的预览，可先回收其他到期预览，后续重试再回收跳过行。SQLite两种存储使用`BEGIN IMMEDIATE`串行写，不把SQLite等同于PG行锁。新增原生PG测试让真实apply在取得preview行锁后暂停，验证清理跳过它、删除另一行，释放后apply成功；本地无已有临时PG URL时skip。
+1. `SQLAlchemyShadowStore.cleanup_previews`在cleanup单次自有连接/事务内以`FOR UPDATE SKIP LOCKED`选中到期预览再删除，与apply持锁行互斥；cleanup与apply使用不同连接/事务。apply仍按plan→preview锁定；清理跳过任何被读/apply持锁的预览，可先回收其他到期预览，后续重试再回收跳过行。SQLite两种存储使用`BEGIN IMMEDIATE`串行写，不把SQLite等同于PG行锁。新增原生PG测试让真实apply在取得preview行锁后暂停，验证清理跳过它、删除另一行，释放后apply成功；本地无已有临时PG URL时skip。
 2. 仅新增`0078_sem_phase1a_grants.py`，接原唯一head0077。PG给`baidu_accounts(id,tenant_id)`加复合唯一索引（id原有主键已保证逻辑唯一）并给新绑定表加复合FK；父账户归属变动同样受限。SQLite用绑定INSERT/UPDATE与父账户id/tenant UPDATE触发器实现等价校验，不重建/删除表。迁移先拒绝已有脏绑定，不自动修复数据；新增绑定generation（旧行0）和授权审计表。旧迁移完全不动，downgrade拒绝，无GRANT/sem_runtime权限变更。唯一索引的构建开销和加锁仍需生产操作前另审，本刀仅在临时空库验证。
 3. slice2 API helper强制显式传入`principal_dependency(adapter(auth_db), …)`，共用授权夹具；服务/store单元测试仍可直接principal并注明。API ScopeDenied按读取/顾问提交意图区分两条固定脱敏文案，Excel导出虽为GET仍有审计写入，按写处理。生产真实会话夹具明确断言同租户active但未绑定204账户不可见。新增业务异常断言使用`pytest.raises(ShadowError)`。
 

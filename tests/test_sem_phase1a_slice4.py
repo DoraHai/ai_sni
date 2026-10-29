@@ -122,6 +122,22 @@ def test_new_management_business_errors_are_shadow_errors():
     assert caught.value.code == 'GRANT_ADMIN_REQUIRED'
 
 
+def test_preview_read_scope_denied_before_reading_attachment(env,auth_db,monkeypatch):
+    from starlette.datastructures import UploadFile
+    service = env[1]
+    def denied(*args):
+        raise ScopeDenied('never-echo-untrusted')
+    async def unexpected_read(*args):
+        pytest.fail('attachment must not be read before account permission check')
+    monkeypatch.setattr(service,'read',denied)
+    monkeypatch.setattr(UploadFile,'read',unexpected_read)
+    api = client(service,dependency=principal_dependency(adapter(auth_db),lambda: SessionIdentity(1,'advisor',101,10)))
+    response = api.post(ROOT+'/missing/previews/advisor',files={'file':('internal.xlsx',b'never-echo-untrusted')})
+    assert response.status_code == 403
+    assert response.json() == {'detail':{'code':'SCOPE_DENIED','message':'无该租户账户的读取权限'}}
+    assert 'never-echo' not in response.text
+
+
 def test_postgres_slice4_cleanup_locked_apply_and_database_tenant_constraint(tmp_path,monkeypatch,capfd):
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -148,11 +164,14 @@ def test_postgres_slice4_cleanup_locked_apply_and_database_tenant_constraint(tmp
         for statement in (
             'INSERT INTO sem_phase1a_account_grants(user_id,tenant_id,account_id) VALUES(2,102,201)',
             'UPDATE sem_phase1a_account_grants SET tenant_id=102 WHERE user_id=1',
+            'UPDATE sem_phase1a_account_grants SET account_id=202 WHERE user_id=1',
             'UPDATE baidu_accounts SET tenant_id=102 WHERE id=201',
         ):
             with pytest.raises(IntegrityError):
                 async with engine.begin() as db:
                     await db.execute(text(statement))
+        async with engine.connect() as db:
+            assert (await db.execute(text('SELECT user_id,tenant_id,account_id,generation FROM sem_phase1a_account_grants'))).all() == [(1,101,201,0)]
         store = SQLAlchemyShadowStore(engine.sync_engine.begin)
         service = ShadowService(submissions,store)
         async def operation(fn):

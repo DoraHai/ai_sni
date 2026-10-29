@@ -81,7 +81,7 @@ def create_router(service: ShadowService, resolve_principal):
             if not (file.filename or "").lower().endswith(".xlsx"):
                 raise HTTPException(422, {"code": "EXCEL_INVALID_OR_TAMPERED", "message": "仅接受内部XLSX"})
             # 在读附件前完成账户权限检查。
-            view = invoke(service.read, principal, plan_id)
+            view = invoke(service.read, principal, plan_id, write=False)
             from app.sem_phase0.store import check_scope
             invoke(check_scope, principal, view["submission"]["tenant_id"], view["submission"]["account_id"])
             data = await file.read(MAX_XLSX_BYTES+1)
