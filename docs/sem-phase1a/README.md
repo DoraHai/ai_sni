@@ -16,13 +16,13 @@
 
 `app/main.py`仅装配三组router，保留enforce_production_secrets。来源与影子路由走真实require_auth→ProductionPrincipalAdapter→DB当前角色/tenant grant代次/模块/精确账户绑定，每请求重查，客户只读JSON/来源/到期建议；内部Excel GET会写审计，仍需顾问写权限。管理走真实require_admin→AccountGrantService事务内DB管理员角色重核，非可归属用户的API Key超管拒绝。顾问门禁`advisor_request`仅增加精确方法/路径列表，未列路径及其他既有写路由保持关闭；来源multipart身份/账户在服务层再核。不改共享JWT机制、百度同步/OAuth或前端。
 
-生产管理装配要求该账户已有至少一个未撤销精确绑定，否则GRANT_ACCOUNT_NOT_INITIALIZED/403，包括首次授权。此策略使空新表对所有人403；首次账户初始化、最后一个绑定撤销后的恢复必须通过另行获批的初始化流程，不能靠HTTP自行开门。本刀没有初始化/回填任何授权数据。已有工厂未启用该生产约束的隔离单元回归仅测管理服务本身。
+生产管理装配要求该账户已有至少一个未撤销精确绑定，否则GRANT_ACCOUNT_NOT_INITIALIZED/403，包括首次授权。此策略使空新表对所有人403；首次账户初始化、最后一个绑定撤销后的恢复，仅能通过另行批准的数据库/运维初始化脚本写入首条绑定，不能靠超管POST或其他HTTP端点自行开门。上线前须在staging演练空账户拒绝、批准脚本初始化、HTTP管理、最后绑定撤销后拒绝及批准脚本恢复，核对租户/账户归属、用户角色、顾问grant代次、最小权限和审计；本刀不提供或执行初始化脚本、不连接staging/生产。本刀没有初始化/回填任何授权数据。已有工厂未启用该生产约束的隔离单元回归仅测管理服务本身；slice5另在真实main.app验证无种子首绑和最后绑定撤销后的三个管理操作，两类管理员均固定403/GRANT_ACCOUNT_NOT_INITIALIZED，绑定与审计全表快照不变。管理list响应只投影user_id、tenant_id、account_id、advisor_grant_id、generation、revoked_at，不返回用户资料或输入原文。
 
 生产规划只使用持久化顾问提交的`product:/benefit:/keywords:`内容和明确预算/投放边界；缺项返回固定契约错误，不调用页面、OCR或模型，不使用合成HTML/假OCR或合成账户资料冒充线上来源。fixture_id在生产被忽略；合成演练适配保留原行为。尚无真实资产及账户预算帽核验，生产视图明确P5 existing_assets_unverified、P6 account_cap_unverified阻断；不能把声明预算当真实账户帽，演练逐项审批因此仍会拒绝。此刀不补真实同步。所有响应execution/go_live均false，正式客户确认pending，无新增execute/upload-to-baidu/enable/customer-confirm/auto-pause出口，内部XLSX仅演练。
 
 ## 验证与上线前事项
 
-`tests/sem_phase1a_main_fixture.py`在独立进程导入实际main.app，真实JWT及生产装配、角色/账户/来源/规划表全部为临时合成数据，无require_auth/principal/服务替身、不进入lifespan、不启动调度器、不读.env/网络。仅让真实数据库factory采用适用SQLite的pool选项。`test_sem_phase1a_slice5.py`对15端点×26状态参数化390项，另测顾问正向/管理员两角色/未绑定账户/即时撤销/源码更新失效/附件默认失败/真实OpenAPI清单与未列路径。保留phase0、1a、slice2/3/4及迁移完整回归。
+`tests/sem_phase1a_main_fixture.py`在独立进程导入实际main.app，真实JWT及生产装配、角色/账户/来源/规划表全部为临时合成数据，无require_auth/principal/服务替身、不进入lifespan、不启动调度器、不读.env/网络。仅让真实数据库factory采用适用SQLite的pool选项。`test_sem_phase1a_slice5.py`对15端点×29状态参数化435项：原26态加有效顾问、内置管理员、平台管理员的真实15维HTTP结果。顾问管理GET/两个POST固定403并验证无绑定/审计变化，顾问审批因生产资产/账户帽未核验仍为422/DUPLICATE_BLOCKED，不伪报审批成功；两类管理员仅三个管理端点200，实际撤销后重授。另有首绑/最后绑定撤销×两类管理员×三个端点12项参数回归，以及未绑定账户/即时撤销/来源更新失效/附件默认失败/真实OpenAPI清单与未列路径。独立进程在导入main前将start_scheduler设为调用即失败的spy，并断言零调用，ASGITransport不进入lifespan。保留phase0、1a、slice2/3/4及迁移完整回归。
 
 新增原生PG用例仅接受已有SEM_ALERT_TEST_DATABASE_URL的loopback/sem_writeback_test，在随机schema实际0077→0078→0079、跨scope FK/只追加拒绝、来源并发仅一次成功、重启/hash读取、附件写失败回滚/后端缺失失败、来源新版本使规划立即失效；无URL本地skip。现有CI完整pytest收集执行，最终必须从本提交日志核对SLICE5_NATIVE_PG_EXECUTED标记；本地SQLite不算PG通过，不改.github。
 

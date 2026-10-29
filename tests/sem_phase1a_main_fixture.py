@@ -53,6 +53,11 @@ async def run(directory):
         kw.pop('max_overflow', None)
         return original_engine(url, **kw)
     sa_async.create_async_engine = local_engine
+    # ASGITransport must not enter application lifespan or start background jobs.
+    from unittest.mock import Mock
+    import app.scheduler
+    scheduler_start = Mock(side_effect=AssertionError('scheduler start forbidden'))
+    app.scheduler.start_scheduler = scheduler_start
     from app.main import app
     from app.database import engine, async_session_factory as factory, get_session
     from app.security import auth
@@ -141,17 +146,21 @@ async def run(directory):
         grants = '/api/v1/sem/phase1a/account-grants/accounts/201'
         payload = json.loads((ROOT/'docs/sem-phase1a/fixtures/submission.internal.json').read_text(encoding='utf-8'))
         payload['page_content'] = 'product: 合成生产来源\nbenefit: 可核验提交\nkeywords: 合成测试'
+        advisor_outcomes = [None] * 15
         response = await api.post(source, data={'metadata':json.dumps(payload)}, headers=headers[1])
         assert response.status_code == 201, ('source', response.status_code, response.text)
+        advisor_outcomes[13] = response.status_code
         create = {'tenant_id':101,'account_id':201,'page_id':payload['landing_page_id'],'submission_revision':1}
         response = await api.post(shadow, json=create, headers=headers[1])
         assert response.status_code == 201, ('create', response.status_code, response.text)
+        advisor_outcomes[0] = response.status_code
         pid = response.json()['plan_id']
         assert response.json()['backend'] == 'submitted_only'
         assert all(s['origin']=='submission' for s in response.json()['sources'])
         assert not response.json()['synthetic']
         response = await api.post(f'{shadow}/{pid}/rulings', json={'expected_version':1,'reason':'合成裁定'},headers=headers[1])
         assert response.status_code == 200, ('ruling',response.status_code,response.text)
+        advisor_outcomes[3] = response.status_code
         assert 'account_cap_unverified' in response.json()['rehearsal_only_blockers']
         cases = [
             ('POST',shadow, {'json':create}),
@@ -186,6 +195,35 @@ async def run(directory):
         for p in paths:
             assert not any(term in p for term in ('execute','upload-to-baidu','enable','customer-confirm','auto-pause'))
         results = {'inventory':15}
+        async def grant_snapshot():
+            async with factory() as session:
+                snapshots = []
+                for query in (
+                    'SELECT * FROM sem_phase1a_account_grants ORDER BY account_id,user_id',
+                    'SELECT * FROM sem_phase1a_grant_audit ORDER BY id'):
+                    snapshots.append(tuple((await session.execute(text(query))).all()))
+                return tuple(snapshots)
+
+        async def uninitialized(name, account_id, tenant_id=101, target_user=1, grant_id=10):
+            before = await grant_snapshot()
+            path = grants.replace('/201','/'+str(account_id))
+            body = {'tenant_id':tenant_id,'user_id':target_user,'advisor_grant_id':grant_id}
+            requests = [('GET',path+'?tenant_id='+str(tenant_id),{}),
+                        ('POST',path,{'json':body}),
+                        ('POST',path+'/revoke',{'json':body})]
+            for uid in (8,9):
+                outcomes = []
+                for index,(method,path,kwargs) in enumerate(requests):
+                    response = await api.request(method,path,headers=headers[uid],**kwargs)
+                    assert response.status_code == 403, (name,uid,index,response.text)
+                    assert response.json()['detail']['code'] == 'GRANT_ACCOUNT_NOT_INITIALIZED'
+                    outcomes.append(response.status_code)
+                results[name+'_'+str(uid)] = outcomes
+            assert await grant_snapshot() == before
+
+        # Account 204 has no seed even though other accounts have active grants.
+        await uninitialized('first_binding',204)
+
         async def matrix(name, uid, expected):
             outcomes = []
             for index,(method,path,kwargs) in enumerate(cases):
@@ -246,28 +284,62 @@ async def run(directory):
                 response = await api.request(method,path,headers=headers[uid],**changed)
                 assert response.status_code == 403, ('unbound',index,response.status_code,response.text)
         results['unbound_account'] = 24
-        # Admin and platform can only manage; advisor/customer cannot manage.
+        # Full 15-endpoint administrator vectors include a real revoke/regrant.
         for uid in (8,9):
-            for index in (10,11):
-                method,path,kwargs=cases[index]
-                response=await api.request(method,path,headers=headers[uid],**kwargs)
-                assert response.status_code == 200, ('admin',index,response.status_code,response.text)
-            for path in (grants+'?tenant_id=102',):
-                assert (await api.get(path,headers=headers[uid])).status_code==403
-        results['admin_management'] = 6
+            outcomes = []
+            for index,(method,path,kwargs) in enumerate(cases):
+                response = await api.request(method,path,headers=headers[uid],**kwargs)
+                assert response.status_code == (200 if 10 <= index <= 12 else 403), (
+                    'admin',uid,index,response.status_code,response.text)
+                outcomes.append(response.status_code)
+            results['admin_'+str(uid)] = outcomes
+            response = await api.post(grants,json=cases[11][2]['json'],headers=headers[uid])
+            assert response.status_code == 200 and response.json()['changed']
+            assert (await api.get(grants+'?tenant_id=102',headers=headers[uid])).status_code == 403
+
+        # Advisor has a valid bound account, yet all management operations deny
+        # before any grant or audit mutation, including the two POST routes.
+        before = await grant_snapshot()
+        for index in (10,11,12):
+            method,path,kwargs = cases[index]
+            response = await api.request(method,path,headers=headers[1],**kwargs)
+            assert response.status_code == 403, ('advisor-management',index,response.text)
+            expected = 'ADVISOR_ROUTE_NOT_AVAILABLE' if index == 10 else 'ADVISOR_HIGH_RISK_WRITES_DISABLED'
+            assert response.json()['detail']['code'] == expected
+            advisor_outcomes[index] = response.status_code
+        assert await grant_snapshot() == before
         # Full advisor success path reaches real persisted service, every endpoint.
-        assert (await api.post(shadow+'/batch',json=cases[1][2]['json'],headers=headers[1])).status_code==201
+        response = await api.post(shadow+'/batch',json=cases[1][2]['json'],headers=headers[1])
+        assert response.status_code == 201
+        advisor_outcomes[1] = response.status_code
         response=await api.post(f'{shadow}/{pid}/structure',json=cases[4][2]['json'],headers=headers[1])
         assert response.status_code==200, ('structure',response.status_code,response.text)
+        advisor_outcomes[4] = response.status_code
         exported=await api.get(f'{shadow}/{pid}/excel/advisor',headers=headers[1]);assert exported.status_code==200
+        advisor_outcomes[5] = exported.status_code
         preview=await api.post(f'{shadow}/{pid}/previews/advisor',files={'file':('internal.xlsx',exported.content)},headers=headers[1])
         assert preview.status_code==200, ('preview',preview.status_code,preview.text)
+        advisor_outcomes[6] = preview.status_code
         applied=await api.post(f'{shadow}/{pid}/apply-preview',json={'expected_version':3,'preview_id':preview.json()['preview_id']},headers=headers[1])
         assert applied.status_code==200, ('apply',applied.status_code,applied.text)
+        advisor_outcomes[7] = applied.status_code
         reviewed=await api.post(f'{shadow}/{pid}/approvals',json={'expected_version':4,'reason':'合成逐项复核',
             'row_ids':[r['row_id'] for r in applied.json()['rows']]},headers=headers[1])
         assert reviewed.status_code==422 and reviewed.json()['detail']['code']=='DUPLICATE_BLOCKED', reviewed.text
-        results['advisor_success'] = 12
+        advisor_outcomes[8] = reviewed.status_code
+        for index in (2,9,14):
+            method,path,kwargs = cases[index]
+            response = await api.request(method,path,headers=headers[1],**kwargs)
+            assert response.status_code == 200, ('advisor-read',index,response.text)
+            advisor_outcomes[index] = response.status_code
+        assert None not in advisor_outcomes
+        results['advisor_bound'] = advisor_outcomes
+
+        # Account 202's only binding can be revoked; public APIs cannot restore it.
+        response = await api.post(grants.replace('/201','/202')+'/revoke',
+            json={'tenant_id':102,'user_id':7},headers=headers[9])
+        assert response.status_code == 200 and response.json()['changed']
+        await uninitialized('last_binding_revoked',202,tenant_id=102,target_user=7,grant_id=None)
         response=await api.post(source,data={'metadata':json.dumps({**payload,'expected_revision':1})},
             files={'screenshots':('never-echo.png',b'\x89PNG\r\n\x1a\nfixture','image/png')},headers=headers[1])
         assert response.status_code==503 and response.json()['detail']['code']=='ATTACHMENT_STORAGE_UNAVAILABLE'
@@ -295,6 +367,8 @@ async def run(directory):
         for suffix in ('execute','upload-to-baidu','enable','customer-confirm','future-write'):
             assert (await api.post(f'{shadow}/{pid}/{suffix}',json={},headers=headers[1])).status_code in (403,404)
         results['closed_routes'] = 5
+    scheduler_start.assert_not_called()
+    results['scheduler_not_started'] = 1
     await engine.dispose()
     return results
 

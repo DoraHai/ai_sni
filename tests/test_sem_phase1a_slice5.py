@@ -25,7 +25,7 @@ from test_sem_phase1a_slice4 import migrate4, base_tables
 
 
 STATES = ('inventory','anonymous','empty_1','empty_2','empty_7','empty_8','empty_9','cross_tenant',
-          'customer_readonly','unbound_account','admin_management','advisor_success',
+          'customer_readonly','unbound_account','scheduler_not_started',
           'attachment_fail_closed','revoked','db_role_changed','new_source_invalidates','closed_routes') + tuple(
           state+'_'+str(uid) for state in ('suspended','closed','expired_trial','expired_active') for uid in (1,2,8,9))
 
@@ -41,7 +41,7 @@ def main_matrix(tmp_path_factory):
 
 
 MATRIX_STATES = ('anonymous','empty_1','empty_2','empty_7','empty_8','empty_9','cross_tenant',
-                 'customer_readonly','revoked','db_role_changed') + tuple(
+                 'customer_readonly','revoked','db_role_changed','advisor_bound','admin_8','admin_9') + tuple(
                  state+'_'+str(uid) for state in ('suspended','closed','expired_trial','expired_active') for uid in (1,2,8,9))
 
 
@@ -51,8 +51,22 @@ def test_actual_main_all_mounted_endpoint_matrix(main_matrix, state, endpoint):
     expected = 401 if state == 'anonymous' else 403
     if state == 'customer_readonly' and endpoint in (2,9,14):
         expected = 200
+    if state == 'advisor_bound':
+        expected = (403 if endpoint in (10,11,12) else 422 if endpoint == 8
+                    else 201 if endpoint in (0,1,13) else 200)
+    if state in ('admin_8','admin_9') and endpoint in (10,11,12):
+        expected = 200
     assert len(main_matrix[state]) == 15
     assert main_matrix[state][endpoint] == expected
+
+
+@pytest.mark.parametrize('state', ('first_binding_8','first_binding_9',
+                                  'last_binding_revoked_8','last_binding_revoked_9'))
+@pytest.mark.parametrize('endpoint', range(3))
+def test_actual_main_production_grant_initialization_is_closed(main_matrix, state, endpoint):
+    # Fixture verifies fixed error codes and unchanged complete grants/audit snapshots.
+    assert len(main_matrix[state]) == 3
+    assert main_matrix[state][endpoint] == 403
 
 
 @pytest.mark.parametrize('state', sorted(set(STATES)-set(MATRIX_STATES)))
