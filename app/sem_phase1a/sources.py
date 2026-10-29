@@ -75,11 +75,13 @@ def text_fields(text):
 
 
 def collect(payload: LandingSubmission, revision: int, submission_hash: str,
-            fixture_id: str) -> list[Source]:
+            fixture_id: str, *, submitted_only=False) -> list[Source]:
     import json
 
-    capture, ocr = fixture_adapters()
-    html, ocr_text = capture.capture(fixture_id), ocr.recognize(fixture_id)
+    html, ocr_text = "", ""
+    if not submitted_only:
+        capture, ocr = fixture_adapters()
+        html, ocr_text = capture.capture(fixture_id), ocr.recognize(fixture_id)
     parser = _Fields()
     parser.feed(html)
     sources = []

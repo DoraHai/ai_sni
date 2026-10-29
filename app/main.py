@@ -138,6 +138,11 @@ app.include_router(assistant_router)
 app.include_router(onboarding_builder_router)
 app.include_router(seo_router)
 
+# Empty explicit account grants deny every caller; no frontend entry or switch.
+from app.sem_phase1a.production import routers as sem_shadow_routers
+for sem_shadow_router in sem_shadow_routers(engine, async_session_factory):
+    app.include_router(sem_shadow_router)
+
 
 @app.get("/health")
 async def health() -> dict:

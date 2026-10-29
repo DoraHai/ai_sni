@@ -1,3 +1,17 @@
+# 阶段1a第五刀交接索引（task12）
+
+- 当前来源/附件持久化、正式路由可见性、fail-closed及上线前事项：[README.md](README.md)文首第五刀。
+- 来源：app/sem_phase0/store.py的SubmissionRepository、postgres_store.py的SQLAlchemySubmissionStore/PrivateAttachmentStore；生产附件后端默认未配置，无环境开关或本地回退。
+- 生产装配：app/sem_phase1a/production.py、app/main.py；精确顾问路径：app/security/advisor_request.py。来源/影子真实require_auth+生产principal；管理真实require_admin+DB角色重核。空绑定所有人403，首次/最后绑定撤销后恢复须另批初始化流程。
+- 唯一新增迁移0079_sem_phase0_sources接0078，三表复合scope FK、只追加触发器；旧迁移不变，无生产upgrade/sem_runtime扩权。
+- 测试：tests/test_sem_phase1a_slice5.py、sem_phase1a_main_fixture.py，实际main.app的15端点参数矩阵与现有CI原生PG；本机PG skip不作通过声明。
+- 外部交接/状态：D:/SNIPERS国内版/梳理-2026-10/sem-entry-20261027/PHASE1A_SLICE5_HANDOFF.md、status12.md；PLAN.v11.md改前原样备份。
+- 分支sem-phase1a-shadow-slice5-20261029，指定独立worktree；Draft目标slice4/91c89a08，叠#822。最终提交/PR/测试数/CI与PG执行证据见外部交接/status。
+- OSS：oss://snipers-video-transfer/diag-20261029/sem-phase1a-slice5/，PLAN/交接/status/README/索引两向--retry-times 3并逐份SHA-256回读；status自身hash独立记录。
+- 下一刀：先审本刀，再单独授权附件后端/授权初始化/生产迁移运维/前端和预算资产核验。无生产数据/部署/合并/force-push/联系任何人，完整阶段1a未完成。
+
+---
+
 # 阶段1a第四刀续做交接索引（task11b）
 
 - 当前契约、清理锁/数据库完整性约束、未挂载的管理API、真实会话权限与挂载阻塞：[README.md](README.md)第四刀章节。

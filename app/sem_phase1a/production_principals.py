@@ -1,4 +1,4 @@
-"""Unregistered production-session bridge. Imports occur only at explicit wiring.
+"""Production-session bridge. Imports occur only at explicit wiring.
 
 Never accepts raw role/tenant/grant headers. require_auth verifies JWT and its
 current grant generation; this adapter re-reads DB roles and explicit account
@@ -76,7 +76,7 @@ class ProductionPrincipalAdapter:
 
 
 def production_principal_dependency():
-    """Explicit factory only. No router registration, environment switch or IO."""
+    """Explicit dependency factory; no environment switch or cached principal."""
     from app.database import get_session
     from app.security.auth import require_auth
 

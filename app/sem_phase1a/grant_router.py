@@ -1,4 +1,4 @@
-"""Explicitly mounted only by callers/tests; no app.main registration."""
+"""Account grant router; production mounting retains real administrator auth."""
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError

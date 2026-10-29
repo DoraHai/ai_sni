@@ -171,11 +171,11 @@ async def run(directory):
                         raise AssertionError('guard error swallowed')
                     except HTTPException as exc:
                         assert exc is error
-        # Real require_auth still denies phase1a routes, including writes.
+        # Unknown phase1a paths remain denied after reviewed slice5 mounting.
         from fastapi import HTTPException
         for method in ('GET', 'POST'):
             request = Request({'type':'http','method':method,'scheme':'https','server':('testserver',443),
-                'path':'/api/v1/sem/phase1a/shadow/plans','query_string':b'','headers':[]})
+                'path':'/api/v1/sem/phase1a/shadow/plans/missing/future-write','query_string':b'','headers':[]})
             if method == 'POST':
                 async def receive():
                     return {'type':'http.request','body':b'{}','more_body':False}

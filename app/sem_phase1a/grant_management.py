@@ -1,4 +1,4 @@
-"""Unregistered account-grant management; explicit session transaction factory only.
+"""Account-grant management; explicit session transaction factory only.
 
 No engine, URL, config, production wiring or new role definitions. Every service
 entry rechecks the existing platform-admin policy against locked database rows.
@@ -77,7 +77,7 @@ class AccountGrantService:
         tenant = await self._row(db, 'SELECT id FROM tenants WHERE id=:id', {'id': tenant_id})
         account = await self._row(db, 'SELECT id,tenant_id,status FROM baidu_accounts WHERE id=:id', {'id': account_id})
         if tenant is None or account is None or account['tenant_id'] != tenant_id:
-            raise GrantError('GRANT_ACCOUNT_SCOPE_INVALID', 422)
+            raise GrantError('GRANT_ACCOUNT_SCOPE_INVALID', 403)
         from app.module_scope import module_is_available
         # Use the existing SEM availability policy, with the module row locked
         # in this same transaction. Administrators cannot bypass a suspension;
@@ -141,7 +141,7 @@ class AccountGrantService:
             row = await self._row(db, 'SELECT user_id,tenant_id,account_id,advisor_grant_id,generation,revoked_at '
                 'FROM sem_phase1a_account_grants WHERE user_id=:uid AND account_id=:aid', {'uid': user_id, 'aid': account_id})
             if row is not None and row['tenant_id'] != tenant_id:
-                raise GrantError('GRANT_ACCOUNT_SCOPE_INVALID', 422)
+                raise GrantError('GRANT_ACCOUNT_SCOPE_INVALID', 403)
             if revoke:
                 if row is None:
                     return {'changed': False, 'grant': None}
