@@ -1,4 +1,48 @@
-# SEM阶段1a第三刀：账户隔离与未挂载的生产适配代码
+# SEM阶段1a第四刀续做（task11b）：未挂载的账户授权管理
+
+**演练复核完成，不可执行、不可上线。** 仅task11b允许的范围A与账户授权管理。未修改`app/main.py`、共享鉴权、百度同步/OAuth或`.github`，未新增环境/配置开关。路由仅在测试显式注入的FastAPI app内挂载，未接生产入口，完整阶段1a未完成。以下第四刀说明为当前口径，后面的第三/二刀内容保留为历史。
+
+开发时间：本轮从status11的“续做 步骤1”开始，提交、CI与封存时间见外部交接；不含人工审查、生产迁移或影子观察。
+
+## review12三项与建议
+
+1. `SQLAlchemyShadowStore.cleanup_previews`在cleanup单次自有连接/事务内以`FOR UPDATE SKIP LOCKED`选中到期预览再删除，与apply持锁行互斥；cleanup与apply使用不同连接/事务。apply仍按plan→preview锁定；清理跳过任何被读/apply持锁的预览，可先回收其他到期预览，后续重试再回收跳过行。SQLite两种存储使用`BEGIN IMMEDIATE`串行写，不把SQLite等同于PG行锁。新增原生PG测试让真实apply在取得preview行锁后暂停，验证清理跳过它、删除另一行，释放后apply成功；本地无已有临时PG URL时skip。
+2. 仅新增`0078_sem_phase1a_grants.py`，接原唯一head0077。PG给`baidu_accounts(id,tenant_id)`加复合唯一索引（id原有主键已保证逻辑唯一）并给新绑定表加复合FK；父账户归属变动同样受限。SQLite用绑定INSERT/UPDATE与父账户id/tenant UPDATE触发器实现等价校验，不重建/删除表。迁移先拒绝已有脏绑定，不自动修复数据；新增绑定generation（旧行0）和授权审计表。旧迁移完全不动，downgrade拒绝，无GRANT/sem_runtime权限变更。唯一索引的构建开销和加锁仍需生产操作前另审，本刀仅在临时空库验证。
+3. slice2 API helper强制显式传入`principal_dependency(adapter(auth_db), …)`，共用授权夹具；服务/store单元测试仍可直接principal并注明。API ScopeDenied按读取/顾问提交意图区分两条固定脱敏文案，Excel导出虽为GET仍有审计写入，按写处理。生产真实会话夹具明确断言同租户active但未绑定204账户不可见。新增业务异常断言使用`pytest.raises(ShadowError)`。
+
+## 管理服务与路由工厂
+
+`AccountGrantService(transaction_factory)`只接受显式注入的AsyncSession事务工厂（如`async_sessionmaker.begin`），不读URL/config、不创建engine/DDL。`create_grant_router(service)`默认直接复用现有`require_admin -> require_auth`；不定义新角色。每次服务调用在同一事务中重新锁定/核对数据库管理员用户、角色、tenant、百度账户；授予时还锁定目标用户/角色及当前有效顾问grant，校验user/tenant/代次和顾问默认tenant有效；客户只可绑定自身tenant且无advisor_grant_id。沿用生产适配器的顾问/只读客户判定。API Key匿名超管因无可归属审计user_id拒绝，真实全局内置管理员与满足现有平台管理权限的全局自定义角色可用。
+
+| 路由（均未注册生产） | 请求与用途 |
+|---|---|
+| GET `/api/v1/sem/phase1a/account-grants/accounts/{account_id}?tenant_id=…` | 列出单账户绑定（含撤销状态/代次），不返回用户名/凭证 |
+| POST 同路径 | `{tenant_id,user_id,advisor_grant_id?}`；授予顾问或客户 |
+| POST 同路径`/revoke` | `{tenant_id,user_id}`；撤销单账户绑定 |
+
+重复相同有效授权/重复撤销不新增审计或代次。首次授予generation=1，撤销保持代次，再授予递增；顾问tenant grant变代次时必须绑定新grant_id。绑定变更与审计（actor/user/tenant/account/advisor_grant_id/generation/action/UTC时间）同事务，审计失败全回滚；无输入理由/名称字段，不回显不可信输入或底层异常。按账户锁串行化首次授予/撤销/重授；SQLite在读取前取得写锁。撤销后下次principal解析立即失去该账户，不跨请求缓存。撤销允许目标已变角色/停用或账户已归档，避免无法收回旧绑定。
+
+review14修复：列出、授予（含幂等请求）和撤销均在同事务读取并锁定对应`tenant_modules`的SEM记录，复用现有`module_is_available`策略：仅active/trial且未过期（含到期当天）可用；suspended/closed/过期/缺失一律403 `GRANT_MODULE_UNAVAILABLE`，两类管理员及直接服务调用一致，拒绝时绑定/代次/审计不变。账户归档仍可撤销的前提是SEM模块可用；挂起期间全部管理操作关闭，恢复后再操作。
+
+审计运营SOP：`sem_phase1a_grant_audit`当前只有account单列FK，没有(account_id,tenant_id)复合约束，不能声称数据库会拒绝审计跨租户写入。审计只允许由`AccountGrantService`在同事务核对账户tenant后随绑定变更写入；禁止脚本/直接SQL/其他服务绕过此入口创建或改写审计。若后续需要其他写入口，须先单独审查新增迁移及复合约束，并补跨tenant拒绝测试；本轮不改0078、不执行生产SQL。
+
+错误码：未登录401；非平台管理员403（现有require_admin）；服务复核拒绝`GRANT_ADMIN_REQUIRED`/`GRANT_IDENTITY_UNAVAILABLE`/`GRANT_ROLE_INVALID`（403）；账户/目标租户/角色/active校验422；顾问授权代次无效`GRANT_ADVISOR_GENERATION_INVALID`（409）；数据库完整性冲突`GRANT_CONFLICT`（409）；存储/解析不可用`GRANT_STORAGE_UNAVAILABLE`（503）；请求契约422/`CONTRACT_INVALID`。均为固定文案。
+
+## 验证、挂载阻塞与下一刀
+
+```powershell
+py -3.13 -X utf8 -m pytest -q tests/test_sem_phase0.py tests/test_sem_phase1a.py tests/test_sem_phase1a_slice2.py tests/test_sem_phase1a_slice3.py tests/test_sem_phase1a_slice4.py tests/test_seo_migration_merge.py
+```
+
+真实JWT管理接口在隔离进程使用临时合成SQLite和纯内存签名/测试配置验证所有端点未登录401、顾问/客户403、管理员与平台管理员正向、幂等、即时撤销、客户只读、DB角色变化、审计失败回滚及错误脱敏。SQLite实际执行0077→0078 upgrade与跨租户INSERT/UPDATE/父归属变更拒绝；不导入迁移env、不连接生产。最终仍要求现有主CI完整`python -m pytest -q tests`全绿，并从日志核对`SLICE4_NATIVE_PG_EXECUTED: cleanup_locked_apply + composite_tenant_fk PASS`，该标记只在新增原生PG所有断言通过后输出；无URL本地skip不算PG通过。沿用仅loopback/sem_writeback_test/随机隔离schema的现有CI能力，不新建CI配置；随机schema随临时服务销毁。
+
+**挂路由留待用户决定**：阶段0来源/附件目前只有显式本地SQLite持久化；影子服务创建和每次读取必须重新核对来源版本/hash。生产挂载需要先确定阶段0来源与附件生产存储、接入/注入、ACL/留存及隔离/配额/超时的授权范围，再审真实顾问路径门禁。本刀没有创建替代来源/绕过检查或改生产入口。真实抓取/OCR/模型外发、百度执行文件/上传/执行/启用/自动暂停、正式客户确认、情况②、前端仍不做；无生产数据/服务器/库操作。
+
+完整交接和结果入口见[HANDOFF_INDEX.md](HANDOFF_INDEX.md)。
+
+---
+
+# SEM阶段1a第三刀历史：账户隔离与未挂载的生产适配代码
 
 **演练复核完成，不可执行、不可上线。** 仅task10第三刀，完整1a未完成。真实页面/OCR/模型/百度执行、正式客户确认、情况②均关闭。未挂app.main、未改生产入口/CI/共享鉴权、未扩sem_runtime权限、未连接生产库。下方第二刀文档保留为历史口径，以本节为准。
 
@@ -6,7 +50,7 @@
 
 本地合成`LocalGrantPrincipalAdapter`每请求以只读连接核对`users.role`与`SessionIdentity.role`，不一致拒绝。该快照role字段为测试简化字段，生产真实角色使用`users.role_id -> roles`，两者不混用。clock必须返回带时区datetime；数据库历史naive锁定时间按UTC解释。
 
-新增`sem_phase1a_account_grants(user_id, tenant_id, account_id, advisor_grant_id, revoked_at)`，不是tenant通配授权。顾问必须同时有当前未撤销tenant grant及精确账户绑定，绑定的advisor_grant_id须匹配会话代次；客户仅自身tenant和advisor_grant_id为空的账户绑定可读，writable永为空。账户还必须active且归属一致。缺表/缺绑定/撤销/旧代次/角色错配均关闭；同tenant其余active账户不自动获得权限。无新增授权写入API、无回填或生产授权修复。
+第三刀新增`sem_phase1a_account_grants(user_id, tenant_id, account_id, advisor_grant_id, revoked_at)`；第四刀0078追加`generation`与`sem_phase1a_grant_audit`审计表，并提供未挂载的管理API，当前schema及管理契约以上方第四刀章节为准。不是tenant通配授权。顾问必须同时有当前未撤销tenant grant及精确账户绑定，绑定的advisor_grant_id须匹配会话代次；客户仅自身tenant和advisor_grant_id为空的账户绑定可读，writable永为空。账户还必须active且归属一致。缺表/缺绑定/撤销/旧代次/角色错配均关闭；同tenant其余active账户不自动获得权限。第三刀当时无授权写入API；两刀均无回填或生产授权修复。
 
 `ProductionPrincipalAdapter`接收现有真实`AuthContext`及显式注入的AsyncSession，重读DB用户/角色，复用`is_advisor`、`read_grants`/`active_grants`、`ensure_module_access`和`ensure_sem_identity_access`；拒绝API Key超管、过期/停用/锁定/角色错配/缺选客户/旧grant/跨tenant/无账户绑定。内置品牌方客户资产菜单的既有edit权限不转为规划写权限。
 
@@ -16,13 +60,13 @@ review11修复：本地和生产适配器在resolve阶段即拒绝空有效账�
 
 ### 账户绑定运营SOP（本刀无写入口）
 
-0077的独立外键不能保证绑定tenant与账户tenant相等；本刀禁止修改已存在迁移、回填授权或连接生产，故保留此数据库约束缺口。当前读取JOIN要求`g.tenant_id=a.tenant_id`，跨租户脏绑定不会授予权限，无剩余有效绑定时resolve直接拒绝；两种适配器均有回归。
+0077的独立外键不能保证绑定tenant与账户tenant相等；第三刀当时禁止修改已存在迁移、回填授权或连接生产，故保留此数据库约束缺口。此历史缺口已由第四刀新增0078数据库约束闭合，以上方第四刀迁移章节为准。读取JOIN仍要求`g.tenant_id=a.tenant_id`，跨租户脏绑定不会授予权限，无剩余有效绑定时resolve直接拒绝；两种适配器均有回归。
 
 后续获单独授权的provisioning流程必须在同一事务中先锁定并核对用户、账户、tenant与当前未撤销advisor grant，要求账户tenant=绑定tenant、账户active，顾问grant的user/tenant/代次一致，客户tenant一致且advisor_grant_id为空；任何不符拒绝写入并留审计。上线前只读巡检绑定与账户tenant不相等、grant归属不符的记录，发现即停止该批开通，由另获授权的流程处理，不自动修复。本刀未提供或执行此巡检/写入工具；下一刀需设计复合FK或管理端事务校验，再审查接线。
 
 ## PostgreSQL存储与新增迁移
 
-`SQLAlchemyShadowStore(connection_factory)`实现同一ShadowStore协议，典型参数是调用方显式提供的`Engine.begin`。不创建engine、不读取URL/config/.env、不执行DDL，不默认使用app.database全局engine。每请求独立事务；PostgreSQL按plan→preview行锁，内部revision CAS覆盖审计写入，预览消费和规划/审批/审计同事务，任一flush失败全回滚。cleanup的DELETE使用相同行锁，SQLite原实现同样使用BEGIN IMMEDIATE；测试验证清理等待持锁事务。
+`SQLAlchemyShadowStore(connection_factory)`实现同一ShadowStore协议，典型参数是调用方显式提供的`Engine.begin`。不创建engine、不读取URL/config/.env、不执行DDL，不默认使用app.database全局engine。每请求独立事务；PostgreSQL按plan→preview行锁，内部revision CAS覆盖审计写入，预览消费和规划/审批/审计同事务，任一flush失败全回滚。第三刀cleanup策略已被第四刀取代：PostgreSQL在同一事务内先以`FOR UPDATE SKIP LOCKED`选到期且未持锁的预览再DELETE，跳过正在读/apply的行；SQLite使用BEGIN IMMEDIATE，测试验证清理等待写锁。两种数据库的等待/跳过行为不同，详见上方第四刀章节。
 
 仅新增`migrations/versions/0077_sem_phase1a_shadow.py`，down_revision为原唯一head `0076_oauth_rebind_intent`。增加上述账户绑定表及`sem_phase1a_shadow_plans`/`sem_phase1a_shadow_previews`（id/revision/payload/expires_at、预览到期索引）。旧迁移不动，只加不删，downgrade明确拒绝，不含权限GRANT或角色修改。迁移未在任何生产库执行。现有phase0来源/截图存储接口仍单独注入；本刀服务仍限定合成fixture账户，不是生产可用入口。
 
@@ -59,7 +103,7 @@ py -3.13 -X utf8 -m app.sem_phase1a.demo_slice3 --output docs/sem-phase1a/sample
 
 规划、来源、裁定、审批、历史、审计和预览均写入独立SQLite；服务没有跨请求规划/预览缓存。每次操作`BEGIN IMMEDIATE`，按需加载记录，提交时以内部storage revision做CAS更新；它覆盖审计/审批等不改变内容版本的写入。内容修改另检查客户端`expected_version`并递增规划版本。多连接/多进程同预览竞争只有一次成功；预览消费标记、规划版本/行、清空旧审批及审计在同一事务提交，任意提交错误全部回滚。SQLite是本机演练持久化，不宣称分布式或生产高可用。
 
-预览默认TTL=3600秒，可通过构造参数注入测试时钟/TTL，返回`expires_at`（UTC Unix秒）。应用时检查过期；`cleanup_previews()`删除到期预览，创建规划或预览时也执行清理。删除不影响规划中的审计。没有后台任务或生产调度器。
+预览默认TTL=3600秒，可通过构造参数注入测试时钟/TTL，返回`expires_at`（UTC Unix秒）。应用时检查过期；`cleanup_previews()`删除到期预览，创建规划或预览时也执行清理。删除不影响规划中的审计。没有后台任务或生产调度器。此段为第二刀历史说明；PG的`FOR UPDATE SKIP LOCKED`与SQLite写锁以文首第四刀第1条为准。
 
 每次读取规划，检查所有引用页的阶段0版本、hash及新版本；任一页有新版本即409，必须重建。phase0读取时也重验LandingSubmission、SHA-256、tenant/account/page与revision绑定；存储脏数据拒绝。返回值均为独立快照。
 
