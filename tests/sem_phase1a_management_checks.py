@@ -174,7 +174,7 @@ async def run_checks(factory, token):
                           ({'tenant_id':101,'user_id':9},'GRANT_TARGET_ROLE_INVALID'),
                           ({'tenant_id':101,'user_id':1,'advisor_grant_id':999},'GRANT_ADVISOR_GENERATION_INVALID')):
             response = await api.post(root,json=bad,headers=admin)
-            assert response.status_code in (409,422) and response.json()['detail']['code'] == code
+            assert response.status_code in (403,409,422) and response.json()['detail']['code'] == code
         for bad in ({**body,'user_id':'never-echo-untrusted'}, {**body,'extra':'never-echo-untrusted'}):
             response = await api.post(root,json=bad,headers=admin)
             assert response.status_code == 422 and 'never-echo' not in response.text

@@ -1,4 +1,9 @@
-"""Explicitly mounted only by callers/tests; no app.main registration."""
+"""Management plane: require_admin -> require_auth, then transactional DB recheck.
+
+Global platform admins deliberately do not use the account-bound production
+principal. Account/module/initialization gates belong to the management service;
+an administrator's own customer account binding is not required.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError

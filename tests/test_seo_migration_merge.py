@@ -43,7 +43,7 @@ def test_merge_revision_is_noop_and_only_head() -> None:
     )
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0078_sem_phase1a_grants"]
+    assert script.get_heads() == ["0079_sem_phase0_sources"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -64,6 +64,7 @@ def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
         "0076_oauth_rebind_intent",
         "0077_sem_phase1a_shadow",
         "0078_sem_phase1a_grants",
+        "0079_sem_phase0_sources",
     ]
 
 
@@ -124,7 +125,7 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
     after, variant_indexes, publication_indexes = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0078_sem_phase1a_grants"
+    assert after == "0079_sem_phase0_sources"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

@@ -1,7 +1,10 @@
-"""不挂app.main的合成API工厂，权限仅由可信服务端依赖注入。"""
+"""影子API工厂；本地及生产适配均保留可信鉴权依赖。"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import inspect
+from sqlalchemy.exc import SQLAlchemyError
+from app.sem_phase0.store import StorageUnavailable
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -31,9 +34,15 @@ class _SafeRoute(APIRoute):
 def create_router(service: ShadowService, resolve_principal):
     router = APIRouter(prefix="/api/v1/sem/phase1a/shadow", tags=["SEM合成影子演练"], route_class=_SafeRoute)
 
-    def invoke(function, *args, write=True):
+    async def invoke(function, *args, write=True):
         try:
-            return function(*args)
+            if inspect.iscoroutinefunction(function):
+                return await function(*args)
+            return await run_in_threadpool(function, *args)
+        except StorageUnavailable as exc:
+            raise HTTPException(503, {"code": exc.code, "message": "来源或附件存储暂不可用"}) from None
+        except SQLAlchemyError:
+            raise HTTPException(503, {"code": "SOURCE_STORAGE_UNAVAILABLE", "message": "来源存储暂不可用"}) from None
         except ScopeDenied:
             message = "无该租户账户的顾问提交权限" if write else "无该租户账户的读取权限"
             raise HTTPException(403, {"code": "SCOPE_DENIED", "message": message}) from None
@@ -49,28 +58,28 @@ def create_router(service: ShadowService, resolve_principal):
             raise HTTPException(422, {"code": "CONTRACT_INVALID", "message": "演练契约或检查不满足"}) from None
 
     @router.post("/plans", status_code=201)
-    def create(body: CreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.create, principal, body)
+    async def create(body: CreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.create, principal, body)
 
     @router.post("/plans/batch", status_code=201)
-    def create_batch(body: BatchCreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.create, principal, body)
+    async def create_batch(body: BatchCreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.create, principal, body)
 
     @router.post("/plans/{plan_id}/structure")
-    def structure(plan_id: str, body: StructureRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.edit_structure, principal, plan_id, body)
+    async def structure(plan_id: str, body: StructureRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.edit_structure, principal, plan_id, body)
 
     @router.get("/plans/{plan_id}")
-    def read(plan_id: str, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.read, principal, plan_id, write=False)
+    async def read(plan_id: str, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.read, principal, plan_id, write=False)
 
     @router.post("/plans/{plan_id}/rulings")
-    def ruling(plan_id: str, body: RulingRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.rule, principal, plan_id, body)
+    async def ruling(plan_id: str, body: RulingRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.rule, principal, plan_id, body)
 
     @router.get("/plans/{plan_id}/excel/{audience}")
-    def export(plan_id: str, audience: str, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        data = invoke(service.export, principal, plan_id, audience)
+    async def export(plan_id: str, audience: str, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        data = await invoke(service.export, principal, plan_id, audience)
         return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": 'attachment; filename="internal-rehearsal-not-for-baidu.xlsx"'})
 
@@ -81,25 +90,25 @@ def create_router(service: ShadowService, resolve_principal):
             if not (file.filename or "").lower().endswith(".xlsx"):
                 raise HTTPException(422, {"code": "EXCEL_INVALID_OR_TAMPERED", "message": "仅接受内部XLSX"})
             # 在读附件前完成账户权限检查。
-            view = invoke(service.read, principal, plan_id, write=False)
+            view = await invoke(service.read, principal, plan_id, write=False)
             from app.sem_phase0.store import check_scope
-            invoke(check_scope, principal, view["submission"]["tenant_id"], view["submission"]["account_id"])
+            await invoke(check_scope, principal, view["submission"]["tenant_id"], view["submission"]["account_id"])
             data = await file.read(MAX_XLSX_BYTES+1)
-            return await run_in_threadpool(invoke, service.preview, principal, plan_id, data, audience)
+            return await invoke(service.preview, principal, plan_id, data, audience)
         finally:
             await file.close()
 
     @router.post("/plans/{plan_id}/apply-preview")
-    def apply(plan_id: str, body: ApplyRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.apply, principal, plan_id, body)
+    async def apply(plan_id: str, body: ApplyRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.apply, principal, plan_id, body)
 
     @router.post("/plans/{plan_id}/approvals")
-    def approve(plan_id: str, body: ApprovalRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.approve, principal, plan_id, body)
+    async def approve(plan_id: str, body: ApprovalRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return await invoke(service.approve, principal, plan_id, body)
 
     @router.get("/plans/{plan_id}/expiry-suggestions")
-    def expiry(plan_id: str, now: datetime | None = None,
+    async def expiry(plan_id: str, now: datetime | None = None,
                principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.expiry, principal, plan_id, now or datetime.now(timezone.utc), write=False)
+        return await invoke(service.expiry, principal, plan_id, now or datetime.now(timezone.utc), write=False)
 
     return router
