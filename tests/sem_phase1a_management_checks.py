@@ -71,6 +71,31 @@ async def run_checks(factory, token):
                     headers={'Authorization':'Bearer '+token(uid,advisor)})
                 assert response.status_code == 403
         assert await count() == 0
+        # The real API-key fallback passes require_admin, but cannot attribute
+        # a grant audit to a user. Every management endpoint must still deny it.
+        key_settings = SimpleNamespace(admin_api_key_query_enabled=False,
+            admin_api_key='synthetic-management-api-key', admin_api_key_tenant_id=None)
+        async with factory() as session:
+            bindings_before = (await session.execute(text(
+                'SELECT * FROM sem_phase1a_account_grants ORDER BY user_id,account_id'))).all()
+        with patch.object(auth, 'get_settings', return_value=key_settings), \
+             patch.object(api_key, 'get_settings', return_value=key_settings), \
+             patch.object(service, '_admin', wraps=service._admin) as admin_check:
+            for path, method, data in ((root+'?tenant_id=101', 'GET', None), (root, 'POST', body),
+                                      (root+'/revoke', 'POST', {'tenant_id':101, 'user_id':1})):
+                response = await api.request(method, path, json=data,
+                    headers={'X-API-Key':key_settings.admin_api_key})
+                assert response.status_code == 403
+                assert response.json()['detail']['code'] == 'GRANT_ADMIN_REQUIRED'
+                assert key_settings.admin_api_key not in response.text
+            assert admin_check.await_count == 3
+            for call in admin_check.await_args_list:
+                key_ctx = call.args[1]
+                assert key_ctx.is_superadmin and key_ctx.user_id is None
+        assert await count() == 0
+        async with factory() as session:
+            assert (await session.execute(text(
+                'SELECT * FROM sem_phase1a_account_grants ORDER BY user_id,account_id'))).all() == bindings_before
         response = await api.post(root, json=body, headers=admin)
         assert response.status_code == 200 and response.json()['changed']
         assert response.json()['grant']['generation'] == 1

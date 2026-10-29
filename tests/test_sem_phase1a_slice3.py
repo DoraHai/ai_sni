@@ -206,6 +206,8 @@ def test_cleanup_waits_for_transaction_lock(env):
 
 
 def test_unique_migration_head_and_empty_local_upgrade(tmp_path):
+    # Upgrade the empty phase1a schema through the current head, with only
+    # minimal pre-existing application tables; never load migrations/env.py.
     cfg = Config(); cfg.set_main_option('script_location', 'migrations')
     scripts = ScriptDirectory.from_config(cfg)
     assert scripts.get_heads() == ['0078_sem_phase1a_grants']
@@ -213,9 +215,23 @@ def test_unique_migration_head_and_empty_local_upgrade(tmp_path):
     assert scripts.get_revision('0077_sem_phase1a_shadow').down_revision == '0076_oauth_rebind_intent'
     engine = create_engine('sqlite:///' + str(tmp_path / 'migration.sqlite'))
     with engine.begin() as db:
+        db.exec_driver_sql('PRAGMA foreign_keys=ON')
+        for name in ('users', 'tenants', 'advisor_tenant_grants'):
+            db.execute(text('CREATE TABLE ' + name + '(id BIGINT PRIMARY KEY)'))
+        db.execute(text('CREATE TABLE baidu_accounts(id INTEGER PRIMARY KEY,tenant_id BIGINT NOT NULL)'))
         migrate(db)
-        names = inspect(db).get_table_names()
-        assert sorted(names) == ['sem_phase1a_account_grants', 'sem_phase1a_shadow_plans', 'sem_phase1a_shadow_previews']
+        with Operations.context(MigrationContext.configure(db)):
+            scripts.get_revision('0078_sem_phase1a_grants').module.upgrade()
+        schema = inspect(db)
+        names = {name for name in schema.get_table_names() if name.startswith('sem_phase1a_')}
+        assert names == {'sem_phase1a_account_grants', 'sem_phase1a_shadow_plans',
+                         'sem_phase1a_shadow_previews', 'sem_phase1a_grant_audit'}
+        generation = next(c for c in schema.get_columns('sem_phase1a_account_grants') if c['name'] == 'generation')
+        assert not generation['nullable'] and str(generation['default']).strip("'\"") == '0'
+        assert {c['name'] for c in schema.get_columns('sem_phase1a_grant_audit')} == {
+            'id', 'actor_id', 'user_id', 'tenant_id', 'account_id', 'advisor_grant_id',
+            'generation', 'action', 'occurred_at'}
+        assert all(db.execute(text('SELECT count(*) FROM ' + name)).scalar_one() == 0 for name in names)
     engine.dispose()
 
 

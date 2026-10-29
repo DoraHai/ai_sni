@@ -18,6 +18,7 @@ from app.sem_phase0.store import AdvisorPrincipal, RevisionConflict, ScopeDenied
 from app.sem_phase1a.contracts import (ApplyRequest, ApprovalRequest, CreateRequest, RulingRequest,
                                       PlanRow, WARNING)
 from app.sem_phase1a.excel import MAX_XLSX_BYTES, parse_workbook
+from app.sem_phase1a.errors import ShadowError
 from app.sem_phase1a.planning import duplicates
 from app.sem_phase1a.router import create_router
 from app.sem_phase1a.service import ShadowService, digest, enable_plan, export_execution
@@ -148,7 +149,7 @@ def test_ruling_override_and_full_tree(env):
 def test_invalid_ruling_atomic(env, choices):
     _, service = env
     state = create(service)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.rule(principal(), state["plan_id"], RulingRequest(expected_version=1,
                      choices=choices, reason="合成非法裁定"))
     assert service.read(principal(), state["plan_id"])["version"] == 1
@@ -200,13 +201,13 @@ def test_advisor_roundtrip_preview_apply_approve_and_invalidation(env):
 def test_customer_preview_never_confirmation_or_apply(env):
     _, service = env
     state = generate(service)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.export(principal(), state["plan_id"], "customer")
     state = approve_all(service, state)
     data = service.export(principal(), state["plan_id"], "customer")
     preview = service.preview(principal(), state["plan_id"], edit(data, "D8", "合成客户建议"), "customer")
     assert preview["audience"] == "customer" and preview["rehearsal_only"]
-    with pytest.raises(ValueError, match="只预览"):
+    with pytest.raises(ShadowError, match="只预览"):
         service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
     current = service.read(principal(), state["plan_id"])
     assert current["version"] == 2 and current["customer_confirmation"] == "pending"
@@ -221,7 +222,7 @@ def test_edits_recheck_and_hard_block_approval(env, text, rule):
     preview = service.preview(principal(), state["plan_id"], data, "advisor")
     assert any(i["rule"] == rule for i in preview["p5"]["issues"]+preview["p6"]["issues"])
     state = service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         approve_all(service, state)
 
 
@@ -232,7 +233,7 @@ def test_budget_edit_rechecked_and_hard_block(env):
     preview = service.preview(principal(), state["plan_id"], data, "advisor")
     assert {"budget_tree", "account_cap"} <= {i["rule"] for i in preview["p6"]["issues"]}
     state = service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         approve_all(service, state)
 
 
@@ -246,7 +247,7 @@ def test_balanced_budget_cannot_silently_override_p1(env):
     rules = {i["rule"] for i in preview["p6"]["issues"]}
     assert "budget_tree" not in rules and "declared_boundary" in rules
     state = service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         approve_all(service, state)
 
 
@@ -267,7 +268,7 @@ def test_long_term_no_expiry_and_account_isolation(env):
 def test_approval_ids_must_exist_and_be_individual(env, row_ids):
     _, service = env
     state = generate(service)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.approve(principal(), state["plan_id"], ApprovalRequest(expected_version=2,
                         row_ids=row_ids, reason="合成非法复核"))
     assert not service.read(principal(), state["plan_id"])["approvals"]
@@ -286,7 +287,7 @@ def test_excel_tampering_and_invalid_values_rejected(env, cell, value, sheet):
     _, service = env
     state = generate(service)
     data = service.export(principal(), state["plan_id"], "advisor")
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.preview(principal(), state["plan_id"], edit(data, cell, value, sheet), "advisor")
     assert service.read(principal(), state["plan_id"])["version"] == 2
 
@@ -309,7 +310,7 @@ def test_excel_literal_formula_source_not_formula(env):
 def test_invalid_and_oversize_excel(env, data):
     _, service = env
     state = generate(service)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.preview(principal(), state["plan_id"], data, "advisor")
 
 
@@ -324,7 +325,7 @@ def test_archive_security(env, name, content):
     out = io.BytesIO(service.export(principal(), state["plan_id"], "advisor"))
     with zipfile.ZipFile(out, "a", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(name, content)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.preview(principal(), state["plan_id"], out.getvalue(), "advisor")
 
 
@@ -332,15 +333,15 @@ def test_stale_cross_plan_replay_and_external_mutation(env):
     _, service = env
     state, other = generate(service), generate(service)
     data = service.export(principal(), state["plan_id"], "advisor")
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.preview(principal(), other["plan_id"], data, "advisor")
     preview = service.preview(principal(), state["plan_id"], data, "advisor")
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.apply(principal(), other["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
     service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
     with pytest.raises(RevisionConflict):
         service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=3, preview_id=preview["preview_id"]))
-    with pytest.raises(ValueError):
+    with pytest.raises(ShadowError):
         service.preview(principal(), state["plan_id"], data, "advisor")
     other["rows"][0]["text"] = "外部篡改"
     other["comparisons"].clear()

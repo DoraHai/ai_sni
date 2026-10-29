@@ -5,6 +5,7 @@
 - 管理服务/路由：`app/sem_phase1a/grant_management.py`、`grant_router.py`；默认复用现有require_admin，仅显式测试app挂载，`app/main.py`未改。
 - 新增迁移：`migrations/versions/0078_sem_phase1a_grants.py`，接0077；复合账户tenant约束、generation与事务审计，只加不删，无生产upgrade/权限扩张。
 - 新增测试：`tests/test_sem_phase1a_slice4.py`；真实会话管理检查：`tests/sem_phase1a_management_checks.py`（由隔离session夹具调用）；迁移契约更新唯一head。
+- review13_out.md修复：README历史cleanup/schema标明第四刀取代；slice3空phase1a schema测试实际链式升级0077→0078并核对generation/审计表；真实HTTP验证API Key超管通过require_admin后仍被管理服务403拒绝、无绑定/审计变化；第一刀业务异常断言收紧为ShadowError。生产挂载与0078生产巡检/索引窗口仍须另行授权，详见外部交接“review13_out.md修复”节。
 - 完整本刀交接/逐步状态：`D:\SNIPERS国内版\梳理-2026-10\sem-entry-20261027\PHASE1A_SLICE4_HANDOFF.md`、`status11.md`；PLAN改前备份`PLAN.v10.md`保留。
 - 分支`sem-phase1a-shadow-slice4-20261029`，Draft目标slice3，叠#821；最终提交/PR/本地与CI测试数/原生PG执行证据见外部交接与status11。
 - OSS：`oss://snipers-video-transfer/diag-20261029/sem-phase1a-slice4/`；PLAN、交接、status及此README/索引最终逐份回读SHA-256，status自身hash独立记录避免自引用。
