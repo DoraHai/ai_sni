@@ -69,9 +69,39 @@ def test_actual_main_production_grant_initialization_is_closed(main_matrix, stat
     assert main_matrix[state][endpoint] == 403
 
 
-@pytest.mark.parametrize('state', sorted(set(STATES)-set(MATRIX_STATES)))
+@pytest.mark.parametrize('state', sorted(set(STATES)-set(MATRIX_STATES)-
+                                       {'attachment_fail_closed','new_source_invalidates','closed_routes'}))
 def test_actual_main_positive_and_inventory_checks(main_matrix,state):
-    assert main_matrix[state] > 0
+    assert main_matrix[state] == {'inventory':15,'unbound_account':24,'scheduler_not_started':1}[state]
+
+
+def test_actual_main_attachment_default_and_new_source_endpoints(main_matrix):
+    assert main_matrix['attachment_fail_closed'] == {'status':503,'code':'ATTACHMENT_STORAGE_UNAVAILABLE'}
+    assert main_matrix['new_source_invalidates'] == {'source_status':201,'plan_status':409}
+    assert set(main_matrix['closed_routes']) == {'execute','upload-to-baidu','enable','customer-confirm','future-write'}
+    assert all(status in (403,404) for status in main_matrix['closed_routes'].values())
+
+
+@pytest.mark.parametrize('endpoint', range(3))
+def test_actual_main_management_rechecks_current_db_role(main_matrix, endpoint):
+    assert main_matrix['management_db_role_changed'][endpoint] == 403
+
+
+@pytest.fixture(scope='module')
+def main_attachments(tmp_path_factory):
+    output = tmp_path_factory.mktemp('slice5-attachments')/'results.json'
+    result = subprocess.run([sys.executable,'-X','utf8','tests/sem_phase1a_main_fixture.py',
+                             str(output),'--attachment-backend'],
+                            capture_output=True,text=True,encoding='utf-8',timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'SLICE5_MAIN_MATRIX_EXECUTED' in result.stdout
+    return json.loads(output.read_text(encoding='utf-8'))
+
+
+@pytest.mark.parametrize(('operation','status'), [('upload',201),('read_hash',200),('customer_read',200),
+                         ('scope_denied',403),('tampered',422),('backend_unavailable',503)])
+def test_actual_main_with_injected_private_attachment_backend(main_attachments, operation, status):
+    assert main_attachments[operation] == status
 
 
 def migrate5(db):

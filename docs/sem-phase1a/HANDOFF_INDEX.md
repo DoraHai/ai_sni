@@ -5,6 +5,7 @@
 - 生产装配：app/sem_phase1a/production.py、app/main.py；精确顾问路径：app/security/advisor_request.py。来源/影子真实require_auth+生产principal；管理真实require_admin+DB角色重核。空绑定所有人403，首次/最后绑定撤销后恢复须另批初始化流程。
 - 唯一新增迁移0079_sem_phase0_sources接0078，三表复合scope FK、只追加触发器；旧迁移不变，无生产upgrade/sem_runtime扩权。
 - 测试：tests/test_sem_phase1a_slice5.py、sem_phase1a_main_fixture.py，实际main.app的15端点参数矩阵与现有CI原生PG；本机PG skip不作通过声明。
+- review17_out.md修复：管理面有意require_admin→require_auth+事务内DB重核、不走账户绑定principal，真实main依赖图/管理员无个人绑定/角色变更回归；独立进程注入私有附件协议内存后端的上传201、读回hash、客户只读、跨scope拒绝、篡改422及后端故障503；标量哨兵改显式端点断言，README补迁移→初始化→附件→切代码顺序和目标PG演练。仅测试装配，不是云后端或生产验收；首绑脚本/孤儿治理/迁移窗口仍另批，详见外部交接review17专节。
 - review16_out.md修复：真实main.app矩阵扩为15×29=435项，包含有效顾问/两类管理员的逐端点向量及顾问三个管理端点403且零绑定/审计变更；另12项覆盖两类管理员无种子首绑/最后绑定撤销后的生产初始化门禁。调度器spy验证未启动；README明确批准数据库/运维初始化脚本及staging演练、管理list字段白名单。对象孤儿治理/附件后端装配/生产迁移窗口、可选装配后上传样例及非小改建议见外部交接review16专节。
 - 外部交接/状态：D:/SNIPERS国内版/梳理-2026-10/sem-entry-20261027/PHASE1A_SLICE5_HANDOFF.md、status12.md；PLAN.v11.md改前原样备份。
 - 分支sem-phase1a-shadow-slice5-20261029，指定独立worktree；Draft目标slice4/91c89a08，叠#822。最终提交/PR/测试数/CI与PG执行证据见外部交接/status。

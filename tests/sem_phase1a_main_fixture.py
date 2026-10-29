@@ -30,7 +30,7 @@ def no_network(*args, **kw):
 socket.create_connection = socket.getaddrinfo = no_network
 
 
-async def run(directory):
+async def run(directory, attachment_backend=False):
     import app.config
     import yaml
     for key in app.config.Settings.model_fields:
@@ -54,11 +54,34 @@ async def run(directory):
         return original_engine(url, **kw)
     sa_async.create_async_engine = local_engine
     # ASGITransport must not enter application lifespan or start background jobs.
-    from unittest.mock import Mock
+    from unittest.mock import Mock, patch
     import app.scheduler
     scheduler_start = Mock(side_effect=AssertionError('scheduler start forbidden'))
     app.scheduler.start_scheduler = scheduler_start
-    from app.main import app
+    from app.sem_phase1a.production import ProductionServices
+    # Test-only composition seam: inject the private binary protocol while
+    # importing actual main.app; auth, principals and services stay real.
+    class MemoryAttachments:
+        def __init__(self):
+            self.objects = {}
+            self.reads = 0
+        def put_if_absent(self, key, data, digest):
+            import hashlib
+            assert hashlib.sha256(data).hexdigest() == digest
+            assert key not in self.objects or self.objects[key] == data
+            self.objects[key] = data
+        def read(self, key, max_bytes):
+            self.reads += 1
+            return self.objects[key][:max_bytes]
+    backend = MemoryAttachments() if attachment_backend else None
+    original_init = ProductionServices.__init__
+    def injected_init(self, engine, attachments=None):
+        original_init(self, engine, backend)
+    if attachment_backend:
+        with patch.object(ProductionServices, '__init__', injected_init):
+            from app.main import app
+    else:
+        from app.main import app
     from app.database import engine, async_session_factory as factory, get_session
     from app.security import auth
     from app.security.auth import require_auth
@@ -146,6 +169,46 @@ async def run(directory):
         grants = '/api/v1/sem/phase1a/account-grants/accounts/201'
         payload = json.loads((ROOT/'docs/sem-phase1a/fixtures/submission.internal.json').read_text(encoding='utf-8'))
         payload['page_content'] = 'product: 合成生产来源\nbenefit: 可核验提交\nkeywords: 合成测试'
+        if attachment_backend:
+            import hashlib
+            binary = b'\x89PNG\r\n\x1a\nsynthetic-inert-evidence'
+            response = await api.post(source, data={'metadata':json.dumps(payload)},
+                files={'screenshots':('never-echo.png',binary,'image/png')},headers=headers[1])
+            assert response.status_code == 201, response.text
+            assert response.json()['revision'] == 1 and response.json()['screenshot_count'] == 1
+            path = f'{source}/101/201/{payload["landing_page_id"]}/1'
+            response = await api.get(path,headers=headers[1])
+            assert response.status_code == 200, response.text
+            stored = response.json()
+            assert stored['screenshots'][0]['sha256'] == hashlib.sha256(binary).hexdigest()
+            assert stored['screenshots'][0]['size'] == len(binary)
+            assert stored['screenshots'][0]['validation'] == 'signature_only_untrusted'
+            assert stored['screenshots'][0]['ocr_status'] == 'not_connected'
+            assert len(backend.objects) == 1 and next(iter(backend.objects.values())) == binary
+            assert 'sem-sources/' not in response.text and 'never-echo' not in response.text
+            customer = await api.get(path,headers=headers[2])
+            assert customer.status_code == 200 and customer.json() == stored
+            reads = backend.reads
+            denied = await api.get(path,headers=headers[7])
+            assert denied.status_code == 403
+            denied = await api.post(source,data={'metadata':json.dumps({**payload,'account_id':204})},
+                files={'screenshots':('never-echo.png',binary,'image/png')},headers=headers[1])
+            assert denied.status_code == 403 and backend.reads == reads and len(backend.objects) == 1
+            # Readback revalidates bytes on every request, after authorization.
+            key = next(iter(backend.objects))
+            backend.objects[key] = binary + b'tampered'
+            tampered = await api.get(path,headers=headers[1])
+            assert tampered.status_code == 422 and tampered.json()['detail']['code'] == 'SOURCE_INVALID'
+            backend.objects[key] = binary
+            with patch.object(backend,'read',side_effect=RuntimeError('never-echo-backend')):
+                unavailable = await api.get(path,headers=headers[1])
+            assert unavailable.status_code == 503
+            assert unavailable.json()['detail']['code'] == 'ATTACHMENT_STORAGE_UNAVAILABLE'
+            assert 'never-echo' not in unavailable.text
+            scheduler_start.assert_not_called()
+            await engine.dispose()
+            return {'upload':201,'read_hash':200,'customer_read':200,
+                    'scope_denied':403,'tampered':422,'backend_unavailable':503}
         advisor_outcomes = [None] * 15
         response = await api.post(source, data={'metadata':json.dumps(payload)}, headers=headers[1])
         assert response.status_code == 201, ('source', response.status_code, response.text)
@@ -183,6 +246,20 @@ async def run(directory):
         mounted = {(m,r.path) for r in app.routes if getattr(r,'path','').startswith(('/api/v1/sem/phase1a','/api/v1/sem/phase0'))
                    for m in r.methods}
         assert len(mounted) == len(cases) == 15
+        # Management intentionally uses admin auth, not the account-bound
+        # principal: global admins have no customer account bindings themselves.
+        from app.security.auth import require_admin
+        def dependency_calls(dependency):
+            return {dependency.call} | set().union(*(dependency_calls(d) for d in dependency.dependencies))
+        for route in app.routes:
+            if getattr(route,'path','').startswith('/api/v1/sem/phase1a/account-grants/'):
+                calls = dependency_calls(route.dependant)
+                assert require_admin in calls and require_auth in calls
+                assert not any(getattr(fn,'__module__','') ==
+                               'app.sem_phase1a.production_principals' for fn in calls)
+        async with factory() as session:
+            assert (await session.execute(text('SELECT COUNT(*) FROM sem_phase1a_account_grants '
+                                               'WHERE user_id IN (8,9)'))).scalar_one() == 0
         from starlette.routing import Match
         for method,path,_ in cases:
             matches = [r for r in app.routes if r.matches({'type':'http','method':method,'path':path.split('?')[0],
@@ -297,6 +374,17 @@ async def run(directory):
             assert response.status_code == 200 and response.json()['changed']
             assert (await api.get(grants+'?tenant_id=102',headers=headers[uid])).status_code == 403
 
+        # The DB role must still be rechecked for every management operation.
+        before = await grant_snapshot()
+        await sql('UPDATE users SET role_id=2 WHERE id=8')
+        for index in (10,11,12):
+            method,path,kwargs = cases[index]
+            response = await api.request(method,path,headers=headers[8],**kwargs)
+            assert response.status_code == 403, response.text
+        assert await grant_snapshot() == before
+        await sql('UPDATE users SET role_id=4 WHERE id=8')
+        results['management_db_role_changed'] = [403,403,403]
+
         # Advisor has a valid bound account, yet all management operations deny
         # before any grant or audit mutation, including the two POST routes.
         before = await grant_snapshot()
@@ -344,7 +432,7 @@ async def run(directory):
             files={'screenshots':('never-echo.png',b'\x89PNG\r\n\x1a\nfixture','image/png')},headers=headers[1])
         assert response.status_code==503 and response.json()['detail']['code']=='ATTACHMENT_STORAGE_UNAVAILABLE'
         assert 'never-echo' not in response.text
-        results['attachment_fail_closed'] = 1
+        results['attachment_fail_closed'] = {'status':response.status_code,'code':response.json()['detail']['code']}
         malformed={**payload,'never-echo-field-name':'never-echo-value'}
         response=await api.post(source,data={'metadata':json.dumps(malformed)},headers=headers[1])
         assert response.status_code==422 and 'never-echo' not in response.text
@@ -361,12 +449,15 @@ async def run(directory):
         # Append newer source: old plan immediately becomes stale, without weaker hash checks.
         response=await api.post(source,data={'metadata':json.dumps({**payload,'expected_revision':1})},headers=headers[1])
         assert response.status_code==201
-        assert (await api.get(f'{shadow}/{pid}',headers=headers[1])).status_code==409
-        results['new_source_invalidates'] = 1
+        stale = await api.get(f'{shadow}/{pid}',headers=headers[1])
+        assert stale.status_code==409
+        results['new_source_invalidates'] = {'source_status':response.status_code,'plan_status':stale.status_code}
         # Unknown and execution-like routes never become advisor accessible.
+        results['closed_routes'] = {}
         for suffix in ('execute','upload-to-baidu','enable','customer-confirm','future-write'):
-            assert (await api.post(f'{shadow}/{pid}/{suffix}',json={},headers=headers[1])).status_code in (403,404)
-        results['closed_routes'] = 5
+            response = await api.post(f'{shadow}/{pid}/{suffix}',json={},headers=headers[1])
+            assert response.status_code in (403,404)
+            results['closed_routes'][suffix] = response.status_code
     scheduler_start.assert_not_called()
     results['scheduler_not_started'] = 1
     await engine.dispose()
@@ -375,6 +466,6 @@ async def run(directory):
 
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory(prefix='sem-slice5-main-') as temp:
-        result = asyncio.run(run(Path(temp)))
+        result = asyncio.run(run(Path(temp), attachment_backend='--attachment-backend' in sys.argv[2:]))
     Path(sys.argv[1]).write_text(json.dumps(result,sort_keys=True),encoding='utf-8')
     print('SLICE5_MAIN_MATRIX_EXECUTED')

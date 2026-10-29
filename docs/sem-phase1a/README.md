@@ -14,6 +14,8 @@
 
 ## 正式入口与可见性
 
+管理面鉴权例外（task12/review17）：账户授权三个端点有意使用真实require_admin→require_auth，再由AccountGrantService在事务内重核DB管理员、账户租户、SEM模块与生产初始化门禁；不走账户绑定ProductionPrincipalAdapter。平台管理员无需拥有顾问/客户账户绑定，不能把管理权限变成来源/影子访问权。来源/影子全部继续使用生产principal。真实main回归检查三个管理路由的依赖图、两类无个人账户绑定管理员仅管理端点200、DB角色变更三个管理端点403且绑定/审计不变。不能为字面对齐而给全局管理员强加顾问账户principal。
+
 `app/main.py`仅装配三组router，保留enforce_production_secrets。来源与影子路由走真实require_auth→ProductionPrincipalAdapter→DB当前角色/tenant grant代次/模块/精确账户绑定，每请求重查，客户只读JSON/来源/到期建议；内部Excel GET会写审计，仍需顾问写权限。管理走真实require_admin→AccountGrantService事务内DB管理员角色重核，非可归属用户的API Key超管拒绝。顾问门禁`advisor_request`仅增加精确方法/路径列表，未列路径及其他既有写路由保持关闭；来源multipart身份/账户在服务层再核。不改共享JWT机制、百度同步/OAuth或前端。
 
 生产管理装配要求该账户已有至少一个未撤销精确绑定，否则GRANT_ACCOUNT_NOT_INITIALIZED/403，包括首次授权。此策略使空新表对所有人403；首次账户初始化、最后一个绑定撤销后的恢复，仅能通过另行批准的数据库/运维初始化脚本写入首条绑定，不能靠超管POST或其他HTTP端点自行开门。上线前须在staging演练空账户拒绝、批准脚本初始化、HTTP管理、最后绑定撤销后拒绝及批准脚本恢复，核对租户/账户归属、用户角色、顾问grant代次、最小权限和审计；本刀不提供或执行初始化脚本、不连接staging/生产。本刀没有初始化/回填任何授权数据。已有工厂未启用该生产约束的隔离单元回归仅测管理服务本身；slice5另在真实main.app验证无种子首绑和最后绑定撤销后的三个管理操作，两类管理员均固定403/GRANT_ACCOUNT_NOT_INITIALIZED，绑定与审计全表快照不变。管理list响应只投影user_id、tenant_id、account_id、advisor_grant_id、generation、revoked_at，不返回用户资料或输入原文。
@@ -21,6 +23,10 @@
 生产规划只使用持久化顾问提交的`product:/benefit:/keywords:`内容和明确预算/投放边界；缺项返回固定契约错误，不调用页面、OCR或模型，不使用合成HTML/假OCR或合成账户资料冒充线上来源。fixture_id在生产被忽略；合成演练适配保留原行为。尚无真实资产及账户预算帽核验，生产视图明确P5 existing_assets_unverified、P6 account_cap_unverified阻断；不能把声明预算当真实账户帽，演练逐项审批因此仍会拒绝。此刀不补真实同步。所有响应execution/go_live均false，正式客户确认pending，无新增execute/upload-to-baidu/enable/customer-confirm/auto-pause出口，内部XLSX仅演练。
 
 ## 验证与上线前事项
+
+review17补充：独立测试进程仅在导入实际main.app时给ProductionServices注入实现PrivateAttachmentStore协议的纯内存测试后端，不替换真实auth/principal/服务，不改变生产默认None、不新增环境开关。HTTP上传201、GET200与原字节SHA-256相同、客户只读、跨租户/未绑定账户403且后端无新增访问、篡改422/SOURCE_INVALID、后端读失败503均有回归；该样例证明挂载组合成功路径，不代表实际云后端已装配或ACL/超时已验收。inventory固定为15端点数量哨兵，另有逐路由匹配及15×29端点矩阵；默认附件503、来源201使旧规划409和关闭路径均输出端点状态并显式断言。
+
+上线顺序检查（须另外批准执行）：先在目标PG同版本的临时小库演练0077→0078→0079及EXECUTE FUNCTION兼容性；批准0078脏绑定只读巡检、清理责任与复合唯一索引扫描/锁窗口后，按窗口安装0078并核实(id,tenant_id)唯一键，再安装依赖它的0079；确认schema与最小DB权限后，由批准的初始化/恢复SOP写首条绑定并核验角色、tenant、顾问代次、责任人和审计（无脚本/权限批准即停止上线）；显式装配并验证私有附件后端、备份/恢复及留存/孤儿治理；最后才允许切换本刀代码并做受保护API验收。不得先切代码再补迁移/种子/附件。当前仅Draft，这份清单不是生产执行授权。初始化/恢复脚本仍未提供，孤儿清理策略及隔离/备份恢复验收仍待另批，禁止自动删除或磁盘回退。未来新增管理方法/路径必须同步审advisor_request门禁、main_fixture路由清单和端点矩阵；list扩展继续显式字段白名单与审计检查。
 
 `tests/sem_phase1a_main_fixture.py`在独立进程导入实际main.app，真实JWT及生产装配、角色/账户/来源/规划表全部为临时合成数据，无require_auth/principal/服务替身、不进入lifespan、不启动调度器、不读.env/网络。仅让真实数据库factory采用适用SQLite的pool选项。`test_sem_phase1a_slice5.py`对15端点×29状态参数化435项：原26态加有效顾问、内置管理员、平台管理员的真实15维HTTP结果。顾问管理GET/两个POST固定403并验证无绑定/审计变化，顾问审批因生产资产/账户帽未核验仍为422/DUPLICATE_BLOCKED，不伪报审批成功；两类管理员仅三个管理端点200，实际撤销后重授。另有首绑/最后绑定撤销×两类管理员×三个端点12项参数回归，以及未绑定账户/即时撤销/来源更新失效/附件默认失败/真实OpenAPI清单与未列路径。独立进程在导入main前将start_scheduler设为调用即失败的spy，并断言零调用，ASGITransport不进入lifespan。保留phase0、1a、slice2/3/4及迁移完整回归。
 
