@@ -208,7 +208,8 @@ def test_cleanup_waits_for_transaction_lock(env):
 def test_unique_migration_head_and_empty_local_upgrade(tmp_path):
     cfg = Config(); cfg.set_main_option('script_location', 'migrations')
     scripts = ScriptDirectory.from_config(cfg)
-    assert scripts.get_heads() == ['0077_sem_phase1a_shadow']
+    assert scripts.get_heads() == ['0078_sem_phase1a_grants']
+    assert scripts.get_revision('0078_sem_phase1a_grants').down_revision == '0077_sem_phase1a_shadow'
     assert scripts.get_revision('0077_sem_phase1a_shadow').down_revision == '0076_oauth_rebind_intent'
     engine = create_engine('sqlite:///' + str(tmp_path / 'migration.sqlite'))
     with engine.begin() as db:

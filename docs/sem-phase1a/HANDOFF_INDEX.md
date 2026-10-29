@@ -1,4 +1,18 @@
-# 阶段1a第三刀交接索引（task10）
+# 阶段1a第四刀续做交接索引（task11b）
+
+- 当前契约、清理锁/数据库完整性约束、未挂载的管理API、真实会话权限与挂载阻塞：[README.md](README.md)第四刀章节。
+- 范围A：`app/sem_phase1a/postgres_store.py`、`router.py`；`tests/test_sem_phase1a_slice2.py`、`sem_phase1a_session_fixture.py`。
+- 管理服务/路由：`app/sem_phase1a/grant_management.py`、`grant_router.py`；默认复用现有require_admin，仅显式测试app挂载，`app/main.py`未改。
+- 新增迁移：`migrations/versions/0078_sem_phase1a_grants.py`，接0077；复合账户tenant约束、generation与事务审计，只加不删，无生产upgrade/权限扩张。
+- 新增测试：`tests/test_sem_phase1a_slice4.py`；真实会话管理检查：`tests/sem_phase1a_management_checks.py`（由隔离session夹具调用）；迁移契约更新唯一head。
+- 完整本刀交接/逐步状态：`D:\SNIPERS国内版\梳理-2026-10\sem-entry-20261027\PHASE1A_SLICE4_HANDOFF.md`、`status11.md`；PLAN改前备份`PLAN.v10.md`保留。
+- 分支`sem-phase1a-shadow-slice4-20261029`，Draft目标slice3，叠#821；最终提交/PR/本地与CI测试数/原生PG执行证据见外部交接与status11。
+- OSS：`oss://snipers-video-transfer/diag-20261029/sem-phase1a-slice4/`；PLAN、交接、status及此README/索引最终逐份回读SHA-256，status自身hash独立记录避免自引用。
+- 下一刀由用户决定阶段0来源/附件生产持久化范围，再审挂载与顾问门禁。本刀结束即停，不联系任何人，不请求reviewer/assignee，不合并/部署。
+
+---
+
+# 阶段1a第三刀历史交接索引（task10）
 
 - 当前契约、存储/会话适配、仍未挂载的真实会话门禁： [README.md](README.md)。
 - 第三刀实现：`app/sem_phase1a/principals.py`、`production_principals.py`、`postgres_store.py`、`service.py`、`router.py`、`excel.py`。
