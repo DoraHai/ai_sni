@@ -83,3 +83,7 @@ DONE
 修复轮19 采用审查允许的统一服务端判断文案，移除仅按行数禁用，按钮改申请撤销；不扩管理响应或后端权限。补两类409错误与拒绝后不刷新/不报成功回归。两条适配器小建议已修，账户锁/身份生命周期治理维持另批。
 修复轮19 2026-10-30T11:50:18.836657+08:00 前端 build（包含新增shadow回归与真实SFC SSR）、verify:sem-build、chunk恢复、请求取消测试通过。完整切片与受保护全库正在运行；禁止真实.env和网络，沿用TEMP既有启动器，无新环境开关。
 修复轮19 2026-10-30T11:52:00.893753+08:00 完整切片 753 passed / 5 skipped；受保护全库 2711 passed / 47 skipped；前端构建/校验/旧回归均通过。仅文档副本用目录.gitattributes保留原始字节与CR行尾，其他空白检查保留；提交前复核零受限路径差异与diff --check。
+修复轮19 2026-10-30T11:54:53.963122+08:00 普通提交/推送 aeba22f6f3565f4c71bc3b23ebaeb748248db999；CI run40999744339五项SUCCESS、部署SKIPPED。pytest 2734 passed/24 skipped，前置原生竞态11 passed；本head临时merge231c0b5→e6519f5b，slice4/5/6与slice6列表原生PG标记实际PASS。前端job123881103993确认新shadow/SSR/build/verify通过。
+修复轮19 2026-10-30T11:54:53.963438+08:00 重要两项与琐碎两项均修复；账户锁覆盖不了其他身份生命周期变化保持另批。三份文档TEMP重新checkout与外部/暂存blob哈希相同；PLAN.v12原SHA不变。修复范围无CI/百度/config/main/auth/迁移差异，无生产/.env/新开关/合并部署/force-push/联系人。
+修复轮19 2026-10-30T11:54:53.963701+08:00 末次仅文档提交继续普通推送并盯该head CI至绿；最终精确head/CI/原生PG和OSS逐份SHA-256回读结果独立记录于review19-validation-summary.json、REVIEW19_SHA256_MANIFEST.json及SHA256_MANIFEST.json，避免文档自身哈希循环。仅全部通过后向用户交付FIXED。
+FIXED

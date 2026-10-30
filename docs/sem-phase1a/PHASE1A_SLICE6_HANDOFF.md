@@ -91,4 +91,6 @@
 - 受保护全库 tests：2711 passed / 47 skipped，没有失败；沿用既有 TEMP 启动器，真实 .env/网络被禁止。PG 本机 skip 不能作为原生通过，仍以新 head CI 日志确认。
 - 前端 build（包含新增保护错误回归、六路由×三角色真实SFC SSR）、verify:sem-build、chunk恢复、身份请求取消全部通过。新增测试最后仅清除无效的行快照断言并补精确请求scope断言，test:sem-shadow 再跑通过；运行代码与已验证构建一致。
 - 相对 e6519f5b 的 CI/config/main/auth/百度/迁移受限路径零差异，git diff --check 与暂存检查通过。三份文档工作树/暂存 Git blob/外部副本逐字节核验；PLAN.v12 原始哈希不变。
-- 准备普通 commit/push 至原 slice6 分支与 Draft PR #824；本轮新 head CI 尚待验证，不以历史绿检查代替。最终文档提交的完整 CI、原生PG标记与 OSS 回读哈希另存 REVIEW19_SHA256_MANIFEST.json。
+- 修复代码已普通提交/推送 `aeba22f6f3565f4c71bc3b23ebaeb748248db999`，仍为原分支/Draft PR #824、base=slice5。该提交 [CI run 40999744339](https://github.com/DoraHai/ai_sni/actions/runs/40999744339) 五项全部 SUCCESS，Deploy SEM frontend only=SKIPPED；[pytest job 123881103822](https://github.com/DoraHai/ai_sni/actions/runs/40999744339/job/123881103822) 全库2734 passed/24 skipped，前置原生竞态11 passed零skip。日志03:53:44Z输出 SLICE6_LIST_NATIVE_PG_EXECUTED，03:53:45Z输出 SLICE6_NATIVE_PG_EXECUTED，均PASS，slice4/5原生标记亦PASS；临时检查merge 231c0b5 明确本head进入 e6519f5b（仅GitHub检查提交，本轮未合并）。前端job123881103993确认本轮shadow脚本/SSR与build/verify均PASS。
+- 本轮末次提交仅同步交接/status。末次文档head、该head的完整绿CI/原生标记以及逐份OSS读回SHA-256，不写进自身文件形成循环，统一保存在同前缀 `review19-validation-summary.json` 与 `REVIEW19_SHA256_MANIFEST.json`（同内容更新通用 `SHA256_MANIFEST.json`）。交付仅在末次head CI绿、工作树干净、所有OSS读回一致后报告 FIXED。
+- 已实际用 git checkout-index 在TEMP重新检出三份文档，与外部/暂存blob SHA-256逐一一致。PLAN.v12保持原始备份，未归一化重写。没有未处理的范围内重要问题或琐碎建议。
