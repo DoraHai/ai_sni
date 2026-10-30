@@ -117,6 +117,7 @@ const ALL_GROUPS = computed(() => [
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
     { label: '智能搭建', path: '/onboarding/builder', key: 'onboarding' },
+    { label: 'SEM 影子规划', path: '/onboarding/sem-shadow', key: 'sem.assets', shadow: true },
   ] },
   { label: '每日盯盘', icon: '📊', badge: badges.alerts, badgeCls: '', hint: `未处理告警 ${badges.alerts} 条，今日新增 ${badges.alertsToday} 条`, children: [
     { label: '数据看板', path: '/monitor/dashboard', key: 'monitor.dashboard' },
@@ -145,6 +146,7 @@ const ALL_GROUPS = computed(() => [
   ] },
   { label: '系统设置', icon: '⚙', children: [
     { label: '账号与权限', path: '/settings/accounts', key: 'settings.accounts' },
+    { label: '账户授权管理', path: '/settings/sem-account-grants', key: 'settings.accounts' },
     { label: '客户与模块', path: '/settings/customers', key: 'settings.customers' },
   ] },
 ])
@@ -155,10 +157,10 @@ const navGroups = computed(() => {
     .map((g) => ({
       ...g,
       // 叶子项按可见权限过滤；下钻页面不出现在菜单配置中。
-      children: g.children.filter((c) => noLogin || session.canView(c.key)),
+      children: g.children.filter((c) => noLogin || session.canView(c.key) || (c.shadow && session.user?.is_advisor)),
     }))
     // 没有任何可见叶子的分组整组隐藏
-    .filter((g) => g.children.some((c) => c.key && (noLogin || session.canView(c.key))))
+    .filter((g) => g.children.some((c) => c.key && (noLogin || session.canView(c.key) || (c.shadow && session.user?.is_advisor))))
 })
 
 // 展开状态：默认展开当前路由所在组

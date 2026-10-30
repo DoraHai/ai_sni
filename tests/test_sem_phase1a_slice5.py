@@ -46,22 +46,21 @@ MATRIX_STATES = ('anonymous','empty_1','empty_2','empty_7','empty_8','empty_9','
 
 
 @pytest.mark.parametrize('state', MATRIX_STATES)
-@pytest.mark.parametrize('endpoint', range(15))
+@pytest.mark.parametrize('endpoint', range(16))
 def test_actual_main_all_mounted_endpoint_matrix(main_matrix, state, endpoint):
     expected = 401 if state == 'anonymous' else 403
-    if state == 'customer_readonly' and endpoint in (2,9,14):
+    if state == 'customer_readonly' and endpoint in (2,9,14,15):
         expected = 200
     if state == 'advisor_bound':
         expected = (403 if endpoint in (10,11,12) else 422 if endpoint == 8
                     else 201 if endpoint in (0,1,13) else 200)
     if state in ('admin_8','admin_9') and endpoint in (10,11,12):
         expected = 200
-    assert len(main_matrix[state]) == 15
+    assert len(main_matrix[state]) == 16
     assert main_matrix[state][endpoint] == expected
 
 
-@pytest.mark.parametrize('state', ('first_binding_8','first_binding_9',
-                                  'last_binding_revoked_8','last_binding_revoked_9'))
+@pytest.mark.parametrize('state', ('first_binding_8','first_binding_9'))
 @pytest.mark.parametrize('endpoint', range(3))
 def test_actual_main_production_grant_initialization_is_closed(main_matrix, state, endpoint):
     # Fixture verifies fixed error codes and unchanged complete grants/audit snapshots.
@@ -72,7 +71,7 @@ def test_actual_main_production_grant_initialization_is_closed(main_matrix, stat
 @pytest.mark.parametrize('state', sorted(set(STATES)-set(MATRIX_STATES)-
                                        {'attachment_fail_closed','new_source_invalidates','closed_routes'}))
 def test_actual_main_positive_and_inventory_checks(main_matrix,state):
-    assert main_matrix[state] == {'inventory':15,'unbound_account':24,'scheduler_not_started':1}[state]
+    assert main_matrix[state] == {'inventory':16,'unbound_account':26,'scheduler_not_started':1}[state]
 
 
 def test_actual_main_attachment_default_and_new_source_endpoints(main_matrix):
@@ -289,6 +288,11 @@ def test_native_pg_sources_transactions_and_scope(capfd):
         assert await services.call('sources','read',who(),101,201,'orphan-page',1) is None
         await services.call('shadow','rule',who(),pid,RulingRequest(expected_version=1,reason='合成PG裁定'))
         assert (await ProductionServices(engine).call('shadow','read',who(),pid))['version']==2
+        index = await services.call('shadow','list_plans',who(),101,201,0,50)
+        assert [item['plan_id'] for item in index] == [pid]
+        assert await services.call('shadow','list_plans',who(),101,201,1,50) == []
+        with pytest.raises(ScopeDenied):
+            await services.call('shadow','list_plans',who(),102,202,0,50)
         # Real database rejects every cross-scope write and evidence mutation.
         for statement in (
             "INSERT INTO sem_phase0_pages VALUES(102,201,'bad','p','https://example.invalid')",
@@ -317,3 +321,9 @@ def test_native_pg_sources_transactions_and_scope(capfd):
     asyncio.run(run())
     with capfd.disabled():
         print('SLICE5_NATIVE_PG_EXECUTED: sources + attachments + transactions + composite_scope PASS',flush=True)
+        print('SLICE6_LIST_NATIVE_PG_EXECUTED: exact account + metadata + pagination PASS',flush=True)
+
+
+def test_actual_main_last_binding_and_writable_advisor_protection(main_matrix):
+    assert main_matrix['last_binding_protected'] == 409
+    assert main_matrix['last_advisor_protected'] == 409

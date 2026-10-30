@@ -6,7 +6,7 @@ import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from app.sem_phase0.store import StorageUnavailable
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
 from fastapi.exceptions import RequestValidationError
@@ -56,6 +56,14 @@ def create_router(service: ShadowService, resolve_principal):
             raise HTTPException(403, {"code": "OPERATION_FORBIDDEN", "message": "该演练操作未获准"}) from None
         except ValueError:
             raise HTTPException(422, {"code": "CONTRACT_INVALID", "message": "演练契约或检查不满足"}) from None
+
+    @router.get('/accounts/{account_id}/plans')
+    async def listing(account_id: int, tenant_id: int = Query(gt=0),
+                      offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
+                      principal: AdvisorPrincipal = Depends(resolve_principal)):
+        if account_id <= 0:
+            raise HTTPException(422, {'code': 'CONTRACT_INVALID'})
+        return await invoke(service.list_plans, principal, tenant_id, account_id, offset, limit, write=False)
 
     @router.post("/plans", status_code=201)
     async def create(body: CreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):

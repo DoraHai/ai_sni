@@ -130,12 +130,14 @@ async def run(directory, attachment_backend=False):
                  permissions={'settings.accounts':'edit','settings.customers':'edit'}),
             Tenant(id=101, name='合成客户'), Tenant(id=102, name='合成其他客户'),
             User(id=1, username='synthetic-advisor', password_hash='unused', role_id=1, tenant_id=101),
+            User(id=6, username='synthetic-spare-advisor', password_hash='unused', role_id=1, tenant_id=101),
             User(id=2, username='synthetic-customer', password_hash='unused', role_id=2, tenant_id=101),
             User(id=7, username='synthetic-other', password_hash='unused', role_id=2, tenant_id=102),
             User(id=8, username='synthetic-platform', password_hash='unused', role_id=4),
             User(id=9, username='synthetic-admin', password_hash='unused', role_id=3),
             TenantModule(id=1, tenant_id=101, module_code='sem', status='active'),
             TenantModule(id=2, tenant_id=102, module_code='sem', status='active'),
+            AdvisorTenantGrant(id=16, user_id=6, tenant_id=101, grant_source='admin', granted_by=1),
             AdvisorTenantGrant(id=10, user_id=1, tenant_id=101, grant_source='admin', granted_by=1)])
         await session.flush([o for o in session.new if isinstance(o, (Role, Tenant))])
         await session.flush([o for o in session.new if isinstance(o, User)])
@@ -145,7 +147,7 @@ async def run(directory, attachment_backend=False):
                 access_token_encrypted='unused', expires_at=datetime(2099,1,1)))
         await session.flush()
         await session.execute(text('INSERT INTO sem_phase1a_account_grants(user_id,tenant_id,account_id,advisor_grant_id) '
-            'VALUES(1,101,201,10),(2,101,201,NULL),(7,102,202,NULL)'))
+            'VALUES(1,101,201,10),(2,101,201,NULL),(6,101,201,16),(7,102,202,NULL)'))
     signing = secrets.token_hex(32)
     auth._jwt_secret = lambda: signing
     def token(uid, **changes):
@@ -209,7 +211,7 @@ async def run(directory, attachment_backend=False):
             await engine.dispose()
             return {'upload':201,'read_hash':200,'customer_read':200,
                     'scope_denied':403,'tampered':422,'backend_unavailable':503}
-        advisor_outcomes = [None] * 15
+        advisor_outcomes = [None] * 16
         response = await api.post(source, data={'metadata':json.dumps(payload)}, headers=headers[1])
         assert response.status_code == 201, ('source', response.status_code, response.text)
         advisor_outcomes[13] = response.status_code
@@ -242,10 +244,11 @@ async def run(directory, attachment_backend=False):
             ('POST',grants,{'json':{'tenant_id':101,'user_id':1,'advisor_grant_id':10}}),
             ('POST',grants+'/revoke',{'json':{'tenant_id':101,'user_id':1}}),
             ('POST',source,{'data':{'metadata':json.dumps(payload)}}),
-            ('GET',f'{source}/101/201/{payload["landing_page_id"]}/1',{})]
+            ('GET',f'{source}/101/201/{payload["landing_page_id"]}/1',{}),
+            ('GET','/api/v1/sem/phase1a/shadow/accounts/201/plans?tenant_id=101',{})]
         mounted = {(m,r.path) for r in app.routes if getattr(r,'path','').startswith(('/api/v1/sem/phase1a','/api/v1/sem/phase0'))
                    for m in r.methods}
-        assert len(mounted) == len(cases) == 15
+        assert len(mounted) == len(cases) == 16
         # Management intentionally uses admin auth, not the account-bound
         # principal: global admins have no customer account bindings themselves.
         from app.security.auth import require_admin
@@ -271,7 +274,7 @@ async def run(directory, attachment_backend=False):
         assert len(paths) == len({p for _,p in mounted})
         for p in paths:
             assert not any(term in p for term in ('execute','upload-to-baidu','enable','customer-confirm','auto-pause'))
-        results = {'inventory':15}
+        results = {'inventory':16}
         async def grant_snapshot():
             async with factory() as session:
                 snapshots = []
@@ -333,7 +336,7 @@ async def run(directory, attachment_backend=False):
         customer_outcomes = []
         for index,(method,path,kwargs) in enumerate(cases):
             response = await api.request(method,path,headers=headers[2],**kwargs)
-            allowed = index in (2,9,14)
+            allowed = index in (2,9,14,15)
             assert response.status_code == (200 if allowed else 403), ('customer',index,response.status_code,response.text)
             customer_outcomes.append(response.status_code)
         results['customer_readonly'] = customer_outcomes
@@ -356,11 +359,11 @@ async def run(directory, attachment_backend=False):
                 changed['json'] = {**kwargs['json'],'account_id':204}
             elif index == 13:
                 changed['data'] = {'metadata':json.dumps(other)}
-            path = path.replace(pid,other_plan['plan_id']).replace('/101/201/','/101/204/')
+            path = path.replace(pid,other_plan['plan_id']).replace('/101/201/','/101/204/').replace('/accounts/201/plans','/accounts/204/plans')
             for uid in (1,2):
                 response = await api.request(method,path,headers=headers[uid],**changed)
                 assert response.status_code == 403, ('unbound',index,response.status_code,response.text)
-        results['unbound_account'] = 24
+        results['unbound_account'] = 26
         # Full 15-endpoint administrator vectors include a real revoke/regrant.
         for uid in (8,9):
             outcomes = []
@@ -415,7 +418,7 @@ async def run(directory, attachment_backend=False):
             'row_ids':[r['row_id'] for r in applied.json()['rows']]},headers=headers[1])
         assert reviewed.status_code==422 and reviewed.json()['detail']['code']=='DUPLICATE_BLOCKED', reviewed.text
         advisor_outcomes[8] = reviewed.status_code
-        for index in (2,9,14):
+        for index in (2,9,14,15):
             method,path,kwargs = cases[index]
             response = await api.request(method,path,headers=headers[1],**kwargs)
             assert response.status_code == 200, ('advisor-read',index,response.text)
@@ -423,11 +426,21 @@ async def run(directory, attachment_backend=False):
         assert None not in advisor_outcomes
         results['advisor_bound'] = advisor_outcomes
 
-        # Account 202's only binding can be revoked; public APIs cannot restore it.
+        # A sole active binding is protected, with no binding/audit mutation.
+        before = await grant_snapshot()
         response = await api.post(grants.replace('/201','/202')+'/revoke',
             json={'tenant_id':102,'user_id':7},headers=headers[9])
-        assert response.status_code == 200 and response.json()['changed']
-        await uninitialized('last_binding_revoked',202,tenant_id=102,target_user=7,grant_id=None)
+        assert response.status_code == 409 and response.json()['detail']['code'] == 'LAST_GRANT_PROTECTED'
+        assert await grant_snapshot() == before
+        results['last_binding_protected'] = 409
+        # Read-only customer rows cannot replace the last usable advisor.
+        await sql('UPDATE sem_phase1a_account_grants SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=6')
+        before = await grant_snapshot()
+        response = await api.post(grants+'/revoke', json={'tenant_id':101,'user_id':1}, headers=headers[9])
+        assert response.status_code == 409 and response.json()['detail']['code'] == 'LAST_WRITABLE_ADVISOR_PROTECTED'
+        assert await grant_snapshot() == before
+        results['last_advisor_protected'] = 409
+        await sql('UPDATE sem_phase1a_account_grants SET revoked_at=NULL WHERE user_id=6')
         response=await api.post(source,data={'metadata':json.dumps({**payload,'expected_revision':1})},
             files={'screenshots':('never-echo.png',b'\x89PNG\r\n\x1a\nfixture','image/png')},headers=headers[1])
         assert response.status_code==503 and response.json()['detail']['code']=='ATTACHMENT_STORAGE_UNAVAILABLE'
