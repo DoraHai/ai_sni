@@ -1,5 +1,6 @@
 export const SHADOW_NOTICE = '影子模式，不会改动百度投放'
 export const LAST_GRANT_NOTICE = '禁止撤掉最后一条有效授权；必须保留至少一名可写顾问。'
+export const REVOKE_CHECK_NOTICE = '是否可撤以服务端为准；申请撤销时会核验当前授权与可写顾问，按钮可点不代表允许撤销。'
 export const IMAGE_LIMITS = { count: 10, single: 10 * 1024 ** 2, total: 30 * 1024 ** 2 }
 
 export function validateScreenshots(files) {

@@ -1,3 +1,5 @@
+修复轮19：仓库内交接入口：[PHASE1A_SLICE6_HANDOFF.md](PHASE1A_SLICE6_HANDOFF.md)、[status15.md](status15.md)、[PLAN.v12.md](PLAN.v12.md)。三份 UTF-8 文件与外部同名文件逐字节同步；OSS 同时保存根键与 docs/sem-phase1a/ 键，SHA-256 回读记录见清单。下方外部路径仅为历史位置，不是唯一交付入口。
+
 # 阶段1a第六刀交接索引（task15）
 
 - 当前行为与上线另批清单见 [README.md](README.md) 文首第六刀；以下历史记录按当轮语境阅读。

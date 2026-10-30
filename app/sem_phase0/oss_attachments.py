@@ -15,6 +15,8 @@ from app.sem_phase0.store import AttachmentUnavailable
 CONNECT_TIMEOUT_SECONDS = 3
 IO_TIMEOUT_SECONDS = 10
 OPERATION_BUDGET_SECONDS = 20
+# Suggested batch/request deadlines belong to the explicit assembly layer;
+# this single-object adapter does not enforce either deadline.
 ATTACHMENT_BATCH_BUDGET_SECONDS = 60
 REQUEST_BUDGET_SECONDS = 90
 MAX_ATTEMPTS = 3
@@ -34,9 +36,10 @@ class OSSPrivateAttachmentStore:
 
     @staticmethod
     def _key(key):
-        if not isinstance(key, str) or _KEY.fullmatch(key) is None:
+        match = _KEY.fullmatch(key) if isinstance(key, str) else None
+        if match is None:
             raise AttachmentUnavailable()
-        return _KEY.fullmatch(key).group(1)
+        return match.group(1)
 
     def _read_once(self, key, max_bytes):
         response = self.bucket.get_object(key)

@@ -3,7 +3,7 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import client from '../../api/client'
 import { session } from '../../store/session'
-import { createShadowApi, SHADOW_NOTICE, LAST_GRANT_NOTICE, validateScreenshots, shadowError, submissionPayload, changeAndReloadGrants } from './shadowPlanning'
+import { createShadowApi, SHADOW_NOTICE, LAST_GRANT_NOTICE, REVOKE_CHECK_NOTICE, validateScreenshots, shadowError, submissionPayload, changeAndReloadGrants } from './shadowPlanning'
 
 const api = createShadowApi(client)
 const route = useRoute(), router = useRouter()
@@ -19,7 +19,6 @@ const busy = ref(false), message = ref(''), error = ref(''), plans = ref([]), pl
 const files = ref([]), saved = ref(null), offset = ref(0), grantForm = reactive({ user_id: null, advisor_grant_id: null })
 const grantsStale = ref(false)
 const reason = ref('')
-const activeCount = computed(() => grants.value.filter(g => !g.revoked_at).length)
 const defaults = () => ({ product_line_id: '', landing_page_id: '', expected_revision: 0, case_type: 'new_account',
   account_ready: false, landing_url: '', page_content: '', goal: '', budget_cents: null, budget_period: 'daily', bid_cap_cents: null,
   regions: '', days: [], start_hour: 0, end_hour: 24, brand_rules: '', negative_keywords: '', starts_at: '', ends_at: '',
@@ -209,11 +208,11 @@ onBeforeUnmount(() => { mounted = false; generation++ })
       <el-card shadow="never"><h2>当前复核边界</h2><p>客户正式确认：待完成</p><p>真实账户预算帽：未核验</p><p>既有资产：未核验</p><el-alert title="P5 / P6 仍阻断；来源更新后旧规划失效。" type="warning" :closable="false" /><p v-for="i in [...(plan.p5?.issues || []), ...(plan.p6?.issues || [])]" :key="i.rule" class="hint">{{ i.rule }}</p></el-card>
     </div>
     <div v-if="page === 'grants'" class="columns">
-      <el-card shadow="never"><h2>精确账户授权</h2><el-alert :title="LAST_GRANT_NOTICE" type="warning" :closable="false" />
+      <el-card shadow="never"><h2>精确账户授权</h2><el-alert :title="LAST_GRANT_NOTICE" type="warning" :closable="false" /><p class="hint">{{ REVOKE_CHECK_NOTICE }}</p>
         <p v-if="!canManage">仅可归属真实登录用户的平台管理员可管理；当前身份没有管理权限。</p>
-        <el-table :data="grants" v-loading="busy" border><el-table-column prop="user_id" label="人员 ID" /><el-table-column prop="advisor_grant_id" label="顾问授权 ID" /><el-table-column prop="generation" label="绑定代次" /><el-table-column label="状态"><template #default="{ row }">{{ row.revoked_at ? '已撤销' : '有效' }}</template></el-table-column><el-table-column label="操作"><template #default="{ row }"><el-button v-if="!row.revoked_at" :disabled="!canManage || busy || grantsStale || activeCount <= 1" title="服务端同时保护最后一名可写顾问" @click="changeGrant(true, row)">撤销</el-button><el-button v-else :disabled="!canManage || busy || grantsStale" @click="changeGrant(false, row)">重新授予</el-button></template></el-table-column></el-table>
+        <el-table :data="grants" v-loading="busy" border><el-table-column prop="user_id" label="人员 ID" /><el-table-column prop="advisor_grant_id" label="顾问授权 ID" /><el-table-column prop="generation" label="绑定代次" /><el-table-column label="状态"><template #default="{ row }">{{ row.revoked_at ? '已撤销' : '有效' }}</template></el-table-column><el-table-column label="操作"><template #default="{ row }"><el-button v-if="!row.revoked_at" :disabled="!canManage || busy || grantsStale" :title="REVOKE_CHECK_NOTICE" @click="changeGrant(true, row)">申请撤销</el-button><el-button v-else :disabled="!canManage || busy || grantsStale" @click="changeGrant(false, row)">重新授予</el-button></template></el-table-column></el-table>
         <form @submit.prevent="changeGrant(false)"><fieldset :disabled="!canManage || busy || grantsStale || !account" class="form-grid"><label>批准名单中的人员 ID<input v-model.number="grantForm.user_id" type="number" min="1" required></label><label>顾问授权 ID（客户只读留空）<input v-model.number="grantForm.advisor_grant_id" type="number" min="1"></label><div class="wide"><el-button type="primary" native-type="submit">授予账户访问</el-button></div></fieldset></form>
-      </el-card><el-card shadow="never"><h2>首次授权须另走流程</h2><p>账户没有有效绑定时，列出、授予、撤销均返回 403。此页不能初始化账户。</p><p>按书面名单逐条核对客户、账户、人员和顾问授权 ID。撤销保留历史与审计。</p><p>界面末条禁用仅作提示；最后可写顾问由后端按当前身份与授权状态再次判断。</p></el-card>
+      </el-card><el-card shadow="never"><h2>首次授权须另走流程</h2><p>账户没有有效绑定时，列出、授予、撤销均返回 403。此页不能初始化账户。</p><p>按书面名单逐条核对客户、账户、人员和顾问授权 ID。撤销保留历史与审计。</p><p>绑定行数不能证明顾问当前可写；服务端按当前身份与授权状态判断，拒绝时保留绑定且不写撤销审计。</p></el-card>
     </div>
   </div>
 </template>

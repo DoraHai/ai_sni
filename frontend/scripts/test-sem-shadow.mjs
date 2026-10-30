@@ -5,7 +5,7 @@ import { renderToString } from 'vue/server-renderer'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ElementPlus from 'element-plus'
 import { shadowRoutes } from '../src/router/shadowRoutes.js'
-import { createShadowApi, validateScreenshots, submissionPayload, shadowError, LAST_GRANT_NOTICE, changeAndReloadGrants } from '../src/views/onboarding/shadowPlanning.js'
+import { createShadowApi, validateScreenshots, submissionPayload, shadowError, LAST_GRANT_NOTICE, REVOKE_CHECK_NOTICE, changeAndReloadGrants } from '../src/views/onboarding/shadowPlanning.js'
 
 const storage = () => { const m = new Map(); return { getItem: k => m.get(k) || null, setItem: (k,v) => m.set(k,v), removeItem: k => m.delete(k) } }
 globalThis.localStorage = storage(); globalThis.sessionStorage = storage()
@@ -40,6 +40,19 @@ assert.equal(committed.refreshFailed,true); assert.equal(committed.result.change
 await assert.rejects(() => changeAndReloadGrants(async () => {throw new Error('denied')}, async () => assert.fail('must not reload'), () => true), /denied/)
 assert.equal(await changeAndReloadGrants(async () => ({changed:true}), async () => assert.fail('stale context must not reload'), () => false),null)
 
+// A writable advisor plus a read-only customer still cannot lose its advisor.
+// Six-field rows do not prove current writability; both protections remain server decisions.
+for (const code of ['LAST_GRANT_PROTECTED', 'LAST_WRITABLE_ADVISOR_PROTECTED']) {
+  const sent = []
+  const protectedApi = createShadowApi({ post: async (...args) => { sent.push(args); throw {status:409,code} } })
+  await assert.rejects(() => changeAndReloadGrants(
+    () => protectedApi.revoke(201,{tenant_id:101,user_id:1,advisor_grant_id:11}),
+    () => assert.fail('a rejected revoke must not reload or announce success'), () => true),
+    error => shadowError(error) === LAST_GRANT_NOTICE)
+  assert.deepEqual(sent,[['/api/v1/sem/phase1a/account-grants/accounts/201/revoke',
+    {tenant_id:101,user_id:1,advisor_grant_id:11}]])
+}
+
 // Compile and SSR-render the real Vue component with existing dependencies.
 // No mounted lifecycle/network calls; routes use a memory history.
 const server = await createServer({ server:{middlewareMode:true}, appType:'custom', configFile:false,
@@ -67,6 +80,7 @@ try {
       }
       if (r.meta.shadowPage==='grants') {
         assert.match(html,/禁止撤掉最后一条有效授权/)
+        assert.ok(html.includes(REVOKE_CHECK_NOTICE))
         if(role!=='admin') assert.match(html,/<fieldset[^>]*disabled/)
       }
     }
