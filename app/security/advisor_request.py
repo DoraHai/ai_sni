@@ -31,7 +31,7 @@ SEM_READ_ROUTES = re.compile(
 # Exact inert source/shadow routes. Future routes and management stay denied.
 SEM_SHADOW_READ = re.compile(
     r'/api/v1/sem/(?:phase1a/shadow/plans/[\w-]+(?:/excel/(?:advisor|customer)|/expiry-suggestions)?'
-    r'|phase0/submissions/[0-9]+/[0-9]+/[\w-]+/[0-9]+)')
+    r'|phase1a/shadow/accounts/[0-9]+/plans|phase0/submissions/[0-9]+/[0-9]+/[\w-]+/[0-9]+)')
 SEM_SHADOW_WRITE = re.compile(
     r'/api/v1/sem/(?:phase1a/shadow/plans(?:/batch|/[\w-]+/(?:structure|rulings|'
     r'previews/(?:advisor|customer)|apply-preview|approvals))?|phase0/submissions)')

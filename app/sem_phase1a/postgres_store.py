@@ -17,6 +17,19 @@ class SQLAlchemyShadowStore:
         # Typically an explicitly supplied Engine.begin; never app.database.engine.
         self.connection_factory = connection_factory
 
+    def list_plans(self, tenant, account, offset, limit):
+        with self.connection_factory() as db:
+            if db.dialect.name == 'postgresql':
+                tenant_expr = "CAST(payload AS JSONB)->'submission'->>'tenant_id'"
+                account_expr = "CAST(payload AS JSONB)->'submission'->>'account_id'"
+            else:
+                tenant_expr = "CAST(json_extract(payload,'$.submission.tenant_id') AS TEXT)"
+                account_expr = "CAST(json_extract(payload,'$.submission.account_id') AS TEXT)"
+            return [json.loads(row[0]) for row in db.execute(text(
+                'SELECT payload FROM sem_phase1a_shadow_plans WHERE '+tenant_expr+'=:tid AND '
+                +account_expr+'=:aid ORDER BY id LIMIT :limit OFFSET :offset'),
+                {'tid': str(tenant), 'aid': str(account), 'limit': limit, 'offset': offset})]
+
     @contextmanager
     def transaction(self):
         with self.connection_factory() as db:

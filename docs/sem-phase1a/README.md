@@ -1,3 +1,25 @@
+# SEM 阶段1a第六刀（task15）
+
+仅实现本刀三项，完整阶段1a仍未完成；Draft叠slice5，不可合并或部署。现有工作台新增「首次接入 → SEM 影子规划」与系统设置下的账户授权管理，五种页面按定稿布局复用现有橙色主题、Vue/Element Plus/session/client。六个前端路由包括详情与导出；来源提交使用原#823完整契约（链接、长文本、可选PNG/JPEG/WebP、10MiB/张/10张/30MiB合计），不抓页/OCR/模型。保存来源201后可单独创建影子规划，并核对来源理由生成内部建议。真实预算帽/既有资产未核验，P5/P6继续阻断；导出仅内部Excel且有审计，客户只读不可导出。未授权/版本冲突/存储503显示明确错误，不假装成功。
+
+为真实列表新增GET /api/v1/sem/phase1a/shadow/accounts/{account_id}/plans?tenant_id=...&offset=0&limit=50（上限100），生产principal每请求重核后check_scope(write=False)，数据库按payload精确tenant/account过滤。响应只有plan_id/version/product_line_id/pages/validation/execution_enabled六项元数据；索引并不证明来源有效，详情/Excel仍逐次复核来源hash/新版本/附件字节。全局管理员管理账户授权仍走require_admin及同事务DB重核，不获得来源/规划读取权。实际main端点矩阵扩为16×29，原未列执行路径继续关闭。
+
+共享鉴权唯一必要变化：app/security/advisor_request.py的SEM_SHADOW_READ增加精确的phase1a/shadow/accounts/[0-9]+/plans GET。原因是#823没有列表端点；影响仅该账户索引读取，仍经模块与ProductionPrincipalAdapter检查。SEM_SHADOW_WRITE、管理路径、JWT及其他既有顾问写门禁不变。前端shadow路由需登录，菜单让已识别顾问可见；所有账户权限仍由服务端决定，不新增角色或功能开关。
+
+附件新增app/sem_phase0/oss_attachments.py的OSSPrivateAttachmentStore，显式注入预配置SDK bucket，无SDK导入/环境读取/凭据值/网络初始化/应用装配。建议配置名SEM_ATTACHMENT_OSS_BUCKET/ENDPOINT/REGION/ROLE_ARN等仅为外部构造契约；不写app/config.py、不新增环境变量默认值。put_object强制x-oss-forbid-overwrite=true、private、SSE-OSS(AES256)，不先HEAD后覆盖；精确保留sem-sources/{tenant}/{account}/{page}/{revision}/{ordinal}-{sha256}。写前验证键/字节SHA-256，条件冲突或响应丢失则限量回读，长度/hash一致才幂等成功；其他冲突失败。读流分块限量并关闭，固定脱敏错误。仅连接/限流/临时错误可重试，最多3次，0.3/1秒退避；建议连接3秒/I-O10秒/单对象20秒/批次60秒/请求90秒为常量。SDK socket超时不等于绝对期限：上线装配必须另审SDK版本、经deadline约束的transport/worker及整批期限；本刀没有生产装配或云端验收，不能据此上线。ProductionServices默认attachments=None仍503。
+
+授权撤销在既有账户锁及事务内，未写revoked_at/审计前检查：撤后无未撤销绑定409/LAST_GRANT_PROTECTED；剩余绑定没有有效可写顾问409/LAST_WRITABLE_ADVISOR_PROTECTED。顾问须用户启用且未锁定、当前角色符合现有is_advisor、精确顾问grant代次有效、默认客户grant存在。仅客户只读绑定不算保留可写顾问。两错误均绑定/审计快照不变；并发撤销串行后最多一条成功。幂等撤销保留；空账户GRANT_ACCOUNT_NOT_INITIALIZED不变。此保护仅覆盖本服务revoke，角色停用、其他grant撤销、模块/账户变化仍可能使顾问失去可用性，需独立生命周期治理，不声称全局永不失去顾问。
+
+界面末条禁用按六字段管理响应统计未撤销行；最后可写顾问由后端实时判断并返回可读提示，不向前端泄露额外用户资料。变更成功后列表刷新失败保留旧记录、提示已保存但列表过期并暂停操作，人工刷新成功后恢复；上下文切换丢弃旧响应。
+
+测试使用原TEMP受保护启动器，禁止真实.env和网络；内存OSS SDK stub仅测试。覆盖幂等/冲突/错误hash/路径/限量读/临时重试/权限不重试/并发同键/单图与多图部分失败数据库回滚（允许留不可达孤儿）；实际main既有显式内存附件201链继续通过。SQLite与现有CI临时PG测末条、只读剩余、停用/锁定/角色/顾问grant/默认客户失效、双撤销以及零副作用。前端无新依赖：六路由×三角色的真实SFC SSR、表单按钮、图片边界、错误/API/时区和授权刷新失败回归纳入npm run build，CI配置不变。最终计数、Cursor限制、CI及OSS证据见外部PHASE1A_SLICE6_HANDOFF.md和status15.md。
+
+上线另批：真开私有桶/地域/RAM/ACL/密钥管理/SDK与绝对deadline装配、真实配置变量、请求体/锁等待/并发压测、备份恢复、初始化书面名单/脚本/PG迁移窗口与最小权限、孤儿对账/清理与生命周期/留存机制、真实预算帽与资产核验。无新迁移、sem_runtime扩权、触发器绕过或生产操作。无百度同步/OAuth、CI/.github、app/config.py、JWT、execute/upload-to-baidu/enable/customer-confirm/auto-pause变化。不合并/部署/force-push，不联系任何人或请求reviewer/assignee。
+
+以下第五刀及更早记录均为历史，末条可撤与无前端描述已被本节取代。
+
+---
+
 # SEM阶段1a第五刀：生产来源持久化与正式影子入口
 
 仅task12/slice5，完整阶段1a仍未完成；不可执行、不可上线。本刀已在app/main.py注册来源、影子规划及账户授权管理15个后端端点。无前端入口、无新环境变量或配置开关、未部署。新授权表为空时包括两类管理员全部403；未登录401。下面第四/三/二刀内容为历史，以本节为当前口径。

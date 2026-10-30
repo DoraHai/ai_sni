@@ -1,3 +1,18 @@
+# 阶段1a第六刀交接索引（task15）
+
+- 当前行为与上线另批清单见 [README.md](README.md) 文首第六刀；以下历史记录按当轮语境阅读。
+- 前端：frontend/src/views/onboarding/ShadowPlanningView.vue、shadowPlanning.js；frontend/src/router/shadowRoutes.js，现有App/router入口；真实API、六路由、来源/规划/内部Excel/授权页，沿用现有橙色主题。SSR/契约测试位于frontend/scripts/test-sem-shadow.mjs，纳入既有build，无新依赖或CI变更。
+- 只读列表：shadow/accounts/{account_id}/plans，精确tenant/account、分页、六字段元数据。共享advisor_request仅精确放行此GET；详情/Excel仍逐次核验来源。
+- 附件：app/sem_phase0/oss_attachments.py，显式SDK bucket注入、条件写/私有/加密/回读SHA-256，生产仍None/503。SDK版本、绝对deadline/整批预算、桶与真实配置均须另批；不把单测当云端验收。
+- 授权：grant_management.py同账户锁/事务内保护最后绑定与最后有效可写顾问，失败无绑定/审计变更；初始化403不变。其他身份生命周期变化不在此服务保护范围。
+- 测试：slice6离线SDK stub/幂等/冲突/回读与多图失败回滚、SQLite/CI临时PG并发；实际main矩阵16×29，末条/只读剩余拒绝；旧切片完整保留。最终计数和原生PG证据见外部交接/status。
+- Cursor composer-2.5 ask只读，无--force；终轮复审与处理见外部交接。没有新增权限、环境开关、迁移、生产装配或百度执行出口。
+- 基线e6519f5b37d06f24a2c5a7013860f981106f5eff；分支sem-phase1a-shadow-slice6-20261030，Draft目标slice5（叠#823）。完整1a仍未完成，无合并/部署/force-push/reviewer或assignee请求，不联系任何人。
+- 外部文件：D:/SNIPERS国内版/梳理-2026-10/sem-entry-20261027/PHASE1A_SLICE6_HANDOFF.md、status15.md、PLAN.md；PLAN.v12.md逐字节备份。
+- OSS仅诊断交付：oss://snipers-video-transfer/diag-20261029/sem-phase1a-slice6/，两向--retry-times 3；关键md回读SHA-256一致后才报告DONE。
+
+---
+
 # 阶段1a第五刀交接索引（task12）
 
 - 当前来源/附件持久化、正式路由可见性、fail-closed及上线前事项：[README.md](README.md)文首第五刀。
