@@ -50,13 +50,13 @@
 
 review17补充：独立测试进程仅在导入实际main.app时给ProductionServices注入实现PrivateAttachmentStore协议的纯内存测试后端，不替换真实auth/principal/服务，不改变生产默认None、不新增环境开关。HTTP上传201、GET200与原字节SHA-256相同、客户只读、跨租户/未绑定账户403且后端无新增访问、篡改422/SOURCE_INVALID、后端读失败503均有回归；该样例证明挂载组合成功路径，不代表实际云后端已装配或ACL/超时已验收。inventory固定为15端点数量哨兵，另有逐路由匹配及15×29端点矩阵；默认附件503、来源201使旧规划409和关闭路径均输出端点状态并显式断言。
 
-上线顺序检查（须另外批准执行）：先在目标PG同版本的临时小库演练0077→0078→0079及EXECUTE FUNCTION兼容性；批准0078脏绑定只读巡检、清理责任与复合唯一索引扫描/锁窗口后，按窗口安装0078并核实(id,tenant_id)唯一键，再安装依赖它的0079；确认schema与最小DB权限后，由批准的初始化/恢复SOP写首条绑定并核验角色、tenant、顾问代次、责任人和审计（无脚本/权限批准即停止上线）；显式装配并验证私有附件后端、备份/恢复及留存/孤儿治理；最后才允许切换本刀代码并做受保护API验收。不得先切代码再补迁移/种子/附件。当前仅Draft，这份清单不是生产执行授权。初始化/恢复脚本仍未提供，孤儿清理策略及隔离/备份恢复验收仍待另批，禁止自动删除或磁盘回退。未来新增管理方法/路径必须同步审advisor_request门禁、main_fixture路由清单和端点矩阵；list扩展继续显式字段白名单与审计检查。
+上线顺序检查（须另外批准执行）：先在目标PG同版本的临时小库演练0112→0113→0114及EXECUTE FUNCTION兼容性；批准0113脏绑定只读巡检、清理责任与复合唯一索引扫描/锁窗口后，按窗口安装0113并核实(id,tenant_id)唯一键，再安装依赖它的0114；确认schema与最小DB权限后，由批准的初始化/恢复SOP写首条绑定并核验角色、tenant、顾问代次、责任人和审计（无脚本/权限批准即停止上线）；显式装配并验证私有附件后端、备份/恢复及留存/孤儿治理；最后才允许切换本刀代码并做受保护API验收。不得先切代码再补迁移/种子/附件。当前仅Draft，这份清单不是生产执行授权。初始化/恢复脚本仍未提供，孤儿清理策略及隔离/备份恢复验收仍待另批，禁止自动删除或磁盘回退。未来新增管理方法/路径必须同步审advisor_request门禁、main_fixture路由清单和端点矩阵；list扩展继续显式字段白名单与审计检查。
 
 `tests/sem_phase1a_main_fixture.py`在独立进程导入实际main.app，真实JWT及生产装配、角色/账户/来源/规划表全部为临时合成数据，无require_auth/principal/服务替身、不进入lifespan、不启动调度器、不读.env/网络。仅让真实数据库factory采用适用SQLite的pool选项。`test_sem_phase1a_slice5.py`对15端点×29状态参数化435项：原26态加有效顾问、内置管理员、平台管理员的真实15维HTTP结果。顾问管理GET/两个POST固定403并验证无绑定/审计变化，顾问审批因生产资产/账户帽未核验仍为422/DUPLICATE_BLOCKED，不伪报审批成功；两类管理员仅三个管理端点200，实际撤销后重授。另有首绑/最后绑定撤销×两类管理员×三个端点12项参数回归，以及未绑定账户/即时撤销/来源更新失效/附件默认失败/真实OpenAPI清单与未列路径。独立进程在导入main前将start_scheduler设为调用即失败的spy，并断言零调用，ASGITransport不进入lifespan。保留phase0、1a、slice2/3/4及迁移完整回归。
 
-新增原生PG用例仅接受已有SEM_ALERT_TEST_DATABASE_URL的loopback/sem_writeback_test，在随机schema实际0077→0078→0079、跨scope FK/只追加拒绝、来源并发仅一次成功、重启/hash读取、附件写失败回滚/后端缺失失败、来源新版本使规划立即失效；无URL本地skip。现有CI完整pytest收集执行，最终必须从本提交日志核对SLICE5_NATIVE_PG_EXECUTED标记；本地SQLite不算PG通过，不改.github。
+新增原生PG用例仅接受已有SEM_ALERT_TEST_DATABASE_URL的loopback/sem_writeback_test，在随机schema实际0112→0113→0114、跨scope FK/只追加拒绝、来源并发仅一次成功、重启/hash读取、附件写失败回滚/后端缺失失败、来源新版本使规划立即失效；无URL本地skip。现有CI完整pytest收集执行，最终必须从本提交日志核对SLICE5_NATIVE_PG_EXECUTED标记；本地SQLite不算PG通过，不改.github。
 
-挂入口后上线前仍要：另审生产0078脏绑定只读巡检/获批清理、账户复合索引扫描/锁窗口及0079新增表/索引/触发器安装窗口；按实际DB角色另审最小权限，本刀不扩sem_runtime；实现并显式装配私有附件后端（ACL/不可变写/限额/超时/回读/保留期/备份/孤儿治理），不得新增临时磁盘回退；另行批准首次账户授权初始化/恢复SOP；另审前端入口和真实顾问使用路径、预算帽/资产核验及来源格式提示。本刀无前端入口，API被授权后可通过客户端调用；OpenAPI存在新接口不代表顾问界面已上线。0078审计单列账户FK的既有残余风险继续按仅管理服务写审计SOP，不新增第二审计写入口。未来运行影子观察/上线须另批。
+挂入口后上线前仍要：另审生产0113脏绑定只读巡检/获批清理、账户复合索引扫描/锁窗口及0114新增表/索引/触发器安装窗口；按实际DB角色另审最小权限，本刀不扩sem_runtime；实现并显式装配私有附件后端（ACL/不可变写/限额/超时/回读/保留期/备份/孤儿治理），不得新增临时磁盘回退；另行批准首次账户授权初始化/恢复SOP；另审前端入口和真实顾问使用路径、预算帽/资产核验及来源格式提示。本刀无前端入口，API被授权后可通过客户端调用；OpenAPI存在新接口不代表顾问界面已上线。0113审计单列账户FK的既有残余风险继续按仅管理服务写审计SOP，不新增第二审计写入口。未来运行影子观察/上线须另批。
 
 ---
 
@@ -86,7 +86,7 @@ review17补充：独立测试进程仅在导入实际main.app时给ProductionSer
 
 review14修复：列出、授予（含幂等请求）和撤销均在同事务读取并锁定对应`tenant_modules`的SEM记录，复用现有`module_is_available`策略：仅active/trial且未过期（含到期当天）可用；suspended/closed/过期/缺失一律403 `GRANT_MODULE_UNAVAILABLE`，两类管理员及直接服务调用一致，拒绝时绑定/代次/审计不变。账户归档仍可撤销的前提是SEM模块可用；挂起期间全部管理操作关闭，恢复后再操作。
 
-审计运营SOP：`sem_phase1a_grant_audit`当前只有account单列FK，没有(account_id,tenant_id)复合约束，不能声称数据库会拒绝审计跨租户写入。审计只允许由`AccountGrantService`在同事务核对账户tenant后随绑定变更写入；禁止脚本/直接SQL/其他服务绕过此入口创建或改写审计。若后续需要其他写入口，须先单独审查新增迁移及复合约束，并补跨tenant拒绝测试；本轮不改0078、不执行生产SQL。
+审计运营SOP：`sem_phase1a_grant_audit`当前只有account单列FK，没有(account_id,tenant_id)复合约束，不能声称数据库会拒绝审计跨租户写入。审计只允许由`AccountGrantService`在同事务核对账户tenant后随绑定变更写入；禁止脚本/直接SQL/其他服务绕过此入口创建或改写审计。若后续需要其他写入口，须先单独审查新增迁移及复合约束，并补跨tenant拒绝测试；本轮不改0113、不执行生产SQL。
 
 错误码：未登录401；非平台管理员403（现有require_admin）；服务复核拒绝`GRANT_ADMIN_REQUIRED`/`GRANT_IDENTITY_UNAVAILABLE`/`GRANT_ROLE_INVALID`（403）；账户/目标租户/角色/active校验422；顾问授权代次无效`GRANT_ADVISOR_GENERATION_INVALID`（409）；数据库完整性冲突`GRANT_CONFLICT`（409）；存储/解析不可用`GRANT_STORAGE_UNAVAILABLE`（503）；请求契约422/`CONTRACT_INVALID`。均为固定文案。
 
@@ -96,7 +96,7 @@ review14修复：列出、授予（含幂等请求）和撤销均在同事务读
 py -3.13 -X utf8 -m pytest -q tests/test_sem_phase0.py tests/test_sem_phase1a.py tests/test_sem_phase1a_slice2.py tests/test_sem_phase1a_slice3.py tests/test_sem_phase1a_slice4.py tests/test_seo_migration_merge.py
 ```
 
-真实JWT管理接口在隔离进程使用临时合成SQLite和纯内存签名/测试配置验证所有端点未登录401、顾问/客户403、管理员与平台管理员正向、幂等、即时撤销、客户只读、DB角色变化、审计失败回滚及错误脱敏。SQLite实际执行0077→0078 upgrade与跨租户INSERT/UPDATE/父归属变更拒绝；不导入迁移env、不连接生产。最终仍要求现有主CI完整`python -m pytest -q tests`全绿，并从日志核对`SLICE4_NATIVE_PG_EXECUTED: cleanup_locked_apply + composite_tenant_fk PASS`，该标记只在新增原生PG所有断言通过后输出；无URL本地skip不算PG通过。沿用仅loopback/sem_writeback_test/随机隔离schema的现有CI能力，不新建CI配置；随机schema随临时服务销毁。
+真实JWT管理接口在隔离进程使用临时合成SQLite和纯内存签名/测试配置验证所有端点未登录401、顾问/客户403、管理员与平台管理员正向、幂等、即时撤销、客户只读、DB角色变化、审计失败回滚及错误脱敏。SQLite实际执行0112→0113 upgrade与跨租户INSERT/UPDATE/父归属变更拒绝；不导入迁移env、不连接生产。最终仍要求现有主CI完整`python -m pytest -q tests`全绿，并从日志核对`SLICE4_NATIVE_PG_EXECUTED: cleanup_locked_apply + composite_tenant_fk PASS`，该标记只在新增原生PG所有断言通过后输出；无URL本地skip不算PG通过。沿用仅loopback/sem_writeback_test/随机隔离schema的现有CI能力，不新建CI配置；随机schema随临时服务销毁。
 
 **挂路由留待用户决定**：阶段0来源/附件目前只有显式本地SQLite持久化；影子服务创建和每次读取必须重新核对来源版本/hash。生产挂载需要先确定阶段0来源与附件生产存储、接入/注入、ACL/留存及隔离/配额/超时的授权范围，再审真实顾问路径门禁。本刀没有创建替代来源/绕过检查或改生产入口。真实抓取/OCR/模型外发、百度执行文件/上传/执行/启用/自动暂停、正式客户确认、情况②、前端仍不做；无生产数据/服务器/库操作。
 
@@ -112,7 +112,7 @@ py -3.13 -X utf8 -m pytest -q tests/test_sem_phase0.py tests/test_sem_phase1a.py
 
 本地合成`LocalGrantPrincipalAdapter`每请求以只读连接核对`users.role`与`SessionIdentity.role`，不一致拒绝。该快照role字段为测试简化字段，生产真实角色使用`users.role_id -> roles`，两者不混用。clock必须返回带时区datetime；数据库历史naive锁定时间按UTC解释。
 
-第三刀新增`sem_phase1a_account_grants(user_id, tenant_id, account_id, advisor_grant_id, revoked_at)`；第四刀0078追加`generation`与`sem_phase1a_grant_audit`审计表，并提供未挂载的管理API，当前schema及管理契约以上方第四刀章节为准。不是tenant通配授权。顾问必须同时有当前未撤销tenant grant及精确账户绑定，绑定的advisor_grant_id须匹配会话代次；客户仅自身tenant和advisor_grant_id为空的账户绑定可读，writable永为空。账户还必须active且归属一致。缺表/缺绑定/撤销/旧代次/角色错配均关闭；同tenant其余active账户不自动获得权限。第三刀当时无授权写入API；两刀均无回填或生产授权修复。
+第三刀新增`sem_phase1a_account_grants(user_id, tenant_id, account_id, advisor_grant_id, revoked_at)`；第四刀0113追加`generation`与`sem_phase1a_grant_audit`审计表，并提供未挂载的管理API，当前schema及管理契约以上方第四刀章节为准。不是tenant通配授权。顾问必须同时有当前未撤销tenant grant及精确账户绑定，绑定的advisor_grant_id须匹配会话代次；客户仅自身tenant和advisor_grant_id为空的账户绑定可读，writable永为空。账户还必须active且归属一致。缺表/缺绑定/撤销/旧代次/角色错配均关闭；同tenant其余active账户不自动获得权限。第三刀当时无授权写入API；两刀均无回填或生产授权修复。
 
 `ProductionPrincipalAdapter`接收现有真实`AuthContext`及显式注入的AsyncSession，重读DB用户/角色，复用`is_advisor`、`read_grants`/`active_grants`、`ensure_module_access`和`ensure_sem_identity_access`；拒绝API Key超管、过期/停用/锁定/角色错配/缺选客户/旧grant/跨tenant/无账户绑定。内置品牌方客户资产菜单的既有edit权限不转为规划写权限。
 
@@ -122,7 +122,7 @@ review11修复：本地和生产适配器在resolve阶段即拒绝空有效账�
 
 ### 账户绑定运营SOP（本刀无写入口）
 
-0077的独立外键不能保证绑定tenant与账户tenant相等；第三刀当时禁止修改已存在迁移、回填授权或连接生产，故保留此数据库约束缺口。此历史缺口已由第四刀新增0078数据库约束闭合，以上方第四刀迁移章节为准。读取JOIN仍要求`g.tenant_id=a.tenant_id`，跨租户脏绑定不会授予权限，无剩余有效绑定时resolve直接拒绝；两种适配器均有回归。
+0112的独立外键不能保证绑定tenant与账户tenant相等；第三刀当时禁止修改已存在迁移、回填授权或连接生产，故保留此数据库约束缺口。此历史缺口已由第四刀新增0113数据库约束闭合，以上方第四刀迁移章节为准。读取JOIN仍要求`g.tenant_id=a.tenant_id`，跨租户脏绑定不会授予权限，无剩余有效绑定时resolve直接拒绝；两种适配器均有回归。
 
 后续获单独授权的provisioning流程必须在同一事务中先锁定并核对用户、账户、tenant与当前未撤销advisor grant，要求账户tenant=绑定tenant、账户active，顾问grant的user/tenant/代次一致，客户tenant一致且advisor_grant_id为空；任何不符拒绝写入并留审计。上线前只读巡检绑定与账户tenant不相等、grant归属不符的记录，发现即停止该批开通，由另获授权的流程处理，不自动修复。本刀未提供或执行此巡检/写入工具；下一刀需设计复合FK或管理端事务校验，再审查接线。
 
