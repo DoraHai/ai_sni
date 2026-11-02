@@ -32,7 +32,7 @@
 
 `SubmissionRepository`为可替换接口；原`SubmissionStore(Path)`保留本机SQLite演练语义。新增`SQLAlchemySubmissionStore(connection_factory, attachments=None)`，无engine/URL/config/DDL/本地文件回退。生产`ProductionServices`只使用现有app.database的异步engine，通过run_sync把每次来源/影子操作（包括全部来源重核和规划/审计/预览提交）包在一个数据库事务中；不创建第二个生产engine。独立适配器亦可注入Engine.begin。提交锁账户以串行首次版本，再锁页面；expected_revision CAS，只追加新版本，产品线/URL/page身份不变。读取重核完整契约、租户/账户/page/revision、规范JSON SHA-256、页面身份、附件清单SHA-256及已配置后端的每个附件字节hash；阶段1a仍重核来源hash并拒绝任一更新来源版本。
 
-仅新增`0079_sem_phase0_sources`接原唯一head0078：`sem_phase0_pages`、`sem_phase0_submissions`、`sem_phase0_attachments`。页面(account_id,tenant_id)复合FK引用账户；版本复合FK引用页面，附件复合FK引用版本，不能跨租户/账户/页面。三表有UPDATE/DELETE拒绝触发器，保留证据；版本/附件序号CHECK及PK/唯一索引。PG复用0078账户复合唯一索引，SQLite仅新增等价索引。旧迁移不变、downgrade拒绝、无GRANT或sem_runtime权限扩张。只在本机临时空库及现有CI临时PG随机schema验证，无生产迁移。
+仅新增`0114_sem_phase0_sources`接0113：`sem_phase0_pages`、`sem_phase0_submissions`、`sem_phase0_attachments`。页面(account_id,tenant_id)复合FK引用账户；版本复合FK引用页面，附件复合FK引用版本，不能跨租户/账户/页面。三表有UPDATE/DELETE拒绝触发器，保留证据；版本/附件序号CHECK及PK/唯一索引。PG复用0113账户复合唯一索引，SQLite仅新增等价索引。旧迁移不变、downgrade拒绝、无GRANT或sem_runtime权限扩张。只在本机临时空库及现有CI临时PG随机schema验证，无生产迁移。
 
 仓库未发现已有私有对象存储抽象或配置，因此提供显式`PrivateAttachmentStore.put_if_absent/read`接口，生产装配默认None；附件上传返回固定503/ATTACHMENT_STORAGE_UNAVAILABLE，不写本地磁盘充当生产附件后端。二进制仅PNG/JPEG/WebP魔数白名单，10MiB/个、30MiB/页、10个，跨页拒绝，记录原字节SHA-256、大小、MIME及signature_only_untrusted；不解码、解析执行或OCR，魔数不代表图片语义安全。私有不可变对象key按tenant/account/page/revision/ordinal/hash限定，不使用上传文件名，不向API返回key/原字节/原异常。提交时先私有写入并回读hash再写版本/附件元数据；后端失败数据库回滚。对象存储与PG无分布式事务，DB失败可留不可达孤儿对象，禁止本刀自动删除；上线前另定留存/孤儿清理策略。读取带附件的版本在后端不可用时同样关闭，不悄悄忽略附件。
 
@@ -69,7 +69,7 @@ review17补充：独立测试进程仅在导入实际main.app时给ProductionSer
 ## review12三项与建议
 
 1. `SQLAlchemyShadowStore.cleanup_previews`在cleanup单次自有连接/事务内以`FOR UPDATE SKIP LOCKED`选中到期预览再删除，与apply持锁行互斥；cleanup与apply使用不同连接/事务。apply仍按plan→preview锁定；清理跳过任何被读/apply持锁的预览，可先回收其他到期预览，后续重试再回收跳过行。SQLite两种存储使用`BEGIN IMMEDIATE`串行写，不把SQLite等同于PG行锁。新增原生PG测试让真实apply在取得preview行锁后暂停，验证清理跳过它、删除另一行，释放后apply成功；本地无已有临时PG URL时skip。
-2. 仅新增`0078_sem_phase1a_grants.py`，接原唯一head0077。PG给`baidu_accounts(id,tenant_id)`加复合唯一索引（id原有主键已保证逻辑唯一）并给新绑定表加复合FK；父账户归属变动同样受限。SQLite用绑定INSERT/UPDATE与父账户id/tenant UPDATE触发器实现等价校验，不重建/删除表。迁移先拒绝已有脏绑定，不自动修复数据；新增绑定generation（旧行0）和授权审计表。旧迁移完全不动，downgrade拒绝，无GRANT/sem_runtime权限变更。唯一索引的构建开销和加锁仍需生产操作前另审，本刀仅在临时空库验证。
+2. 仅新增`20261103_0113_sem_phase1a_grants.py`，接0112。PG给`baidu_accounts(id,tenant_id)`加复合唯一索引（id原有主键已保证逻辑唯一）并给新绑定表加复合FK；父账户归属变动同样受限。SQLite用绑定INSERT/UPDATE与父账户id/tenant UPDATE触发器实现等价校验，不重建/删除表。迁移先拒绝已有脏绑定，不自动修复数据；新增绑定generation（旧行0）和授权审计表。旧迁移完全不动，downgrade拒绝，无GRANT/sem_runtime权限变更。唯一索引的构建开销和加锁仍需生产操作前另审，本刀仅在临时空库验证。
 3. slice2 API helper强制显式传入`principal_dependency(adapter(auth_db), …)`，共用授权夹具；服务/store单元测试仍可直接principal并注明。API ScopeDenied按读取/顾问提交意图区分两条固定脱敏文案，Excel导出虽为GET仍有审计写入，按写处理。生产真实会话夹具明确断言同租户active但未绑定204账户不可见。新增业务异常断言使用`pytest.raises(ShadowError)`。
 
 ## 管理服务与路由工厂
@@ -130,7 +130,7 @@ review11修复：本地和生产适配器在resolve阶段即拒绝空有效账�
 
 `SQLAlchemyShadowStore(connection_factory)`实现同一ShadowStore协议，典型参数是调用方显式提供的`Engine.begin`。不创建engine、不读取URL/config/.env、不执行DDL，不默认使用app.database全局engine。每请求独立事务；PostgreSQL按plan→preview行锁，内部revision CAS覆盖审计写入，预览消费和规划/审批/审计同事务，任一flush失败全回滚。第三刀cleanup策略已被第四刀取代：PostgreSQL在同一事务内先以`FOR UPDATE SKIP LOCKED`选到期且未持锁的预览再DELETE，跳过正在读/apply的行；SQLite使用BEGIN IMMEDIATE，测试验证清理等待写锁。两种数据库的等待/跳过行为不同，详见上方第四刀章节。
 
-仅新增`migrations/versions/0077_sem_phase1a_shadow.py`，down_revision为原唯一head `0076_oauth_rebind_intent`。增加上述账户绑定表及`sem_phase1a_shadow_plans`/`sem_phase1a_shadow_previews`（id/revision/payload/expires_at、预览到期索引）。旧迁移不动，只加不删，downgrade明确拒绝，不含权限GRANT或角色修改。迁移未在任何生产库执行。现有phase0来源/截图存储接口仍单独注入；本刀服务仍限定合成fixture账户，不是生产可用入口。
+仅新增`migrations/versions/20261103_0112_sem_phase1a_shadow.py`，down_revision为生产已应用 head `0111_geo_autopatrol`。增加上述账户绑定表及`sem_phase1a_shadow_plans`/`sem_phase1a_shadow_previews`（id/revision/payload/expires_at、预览到期索引）。旧迁移不动，只加不删，downgrade明确拒绝，不含权限GRANT或角色修改。迁移未在任何生产库执行。现有phase0来源/截图存储接口仍单独注入；本刀服务仍限定合成fixture账户，不是生产可用入口。
 
 本地用临时SQLite实际执行新增upgrade（不导入migrations/env.py）及可替换存储重启/一次应用/CAS/第二次flush失败全回滚。原生PostgreSQL测试只接受现有CI的SEM_ALERT_TEST_DATABASE_URL、loopback和sem_writeback_test库，创建随机隔离schema，不读取应用DATABASE_URL、不删除已有表、不新增CI服务/配置；CI临时服务随任务销毁。无该本地测试服务时明确skip，不伪报原生验证。旧迁移hash检查以Git LF换行校验，兼容Windows CRLF checkout；未改变旧迁移。
 

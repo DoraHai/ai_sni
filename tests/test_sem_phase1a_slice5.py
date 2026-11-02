@@ -104,7 +104,7 @@ def test_actual_main_with_injected_private_attachment_backend(main_attachments, 
 
 
 def migrate5(db):
-    spec = importlib.util.spec_from_file_location('slice5','migrations/versions/0079_sem_phase0_sources.py')
+    spec = importlib.util.spec_from_file_location('slice5','migrations/versions/20261103_0114_sem_phase0_sources.py')
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     with Operations.context(MigrationContext.configure(db)):
         module.upgrade()
@@ -244,7 +244,7 @@ def test_attachment_bounds_reject_before_backend(source_db,data,count,page):
 
 
 def test_slice5_downgrade_refused():
-    spec=importlib.util.spec_from_file_location('slice5','migrations/versions/0079_sem_phase0_sources.py')
+    spec=importlib.util.spec_from_file_location('slice5','migrations/versions/20261103_0114_sem_phase0_sources.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     with pytest.raises(RuntimeError,match='downgrade'):
         module.downgrade()

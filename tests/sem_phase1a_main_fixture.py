@@ -113,12 +113,12 @@ async def run(directory, attachment_backend=False):
         model.__table__.to_metadata(metadata)
     cfg = Config(); cfg.set_main_option('script_location', str(ROOT / 'migrations'))
     scripts = ScriptDirectory.from_config(cfg)
-    assert scripts.get_heads() == ['0079_sem_phase0_sources']
+    assert scripts.get_heads() == ['0114_sem_phase0_sources']
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
         def migrate(db):
             with Operations.context(MigrationContext.configure(db)):
-                for rev in ('0077_sem_phase1a_shadow', '0078_sem_phase1a_grants', '0079_sem_phase0_sources'):
+                for rev in ('0112_sem_phase1a_shadow', '0113_sem_phase1a_grants', '0114_sem_phase0_sources'):
                     scripts.get_revision(rev).module.upgrade()
         await connection.run_sync(migrate)
     async with factory() as session, session.begin():

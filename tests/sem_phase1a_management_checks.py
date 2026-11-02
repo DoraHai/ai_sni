@@ -26,7 +26,7 @@ async def run_checks(factory, token):
     from app.models.advisor_tenant_grant import AdvisorTenantGrant
     from app.permissions import ALL_EDIT, CLIENT_PERMS
     from app.security.auth import AuthContext, require_admin
-    spec = importlib.util.spec_from_file_location('slice4', 'migrations/versions/0078_sem_phase1a_grants.py')
+    spec = importlib.util.spec_from_file_location('slice4', 'migrations/versions/20261103_0113_sem_phase1a_grants.py')
     migration = importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
     async with factory() as session, session.begin():
         connection = await session.connection()

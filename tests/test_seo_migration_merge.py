@@ -43,7 +43,7 @@ def test_merge_revision_is_noop_and_only_head() -> None:
     )
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0079_sem_phase0_sources"]
+    assert script.get_heads() == ["0114_sem_phase0_sources"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -56,16 +56,27 @@ def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
     steps = script._upgrade_revs("head", "0073_geo_schema_repair")
     revisions = [step.revision.revision for step in steps]
     assert "0073_geo_schema_repair" not in revisions
-    assert revisions == [
-        "0073_seo_distribution_variants",
-        "0074_merge_geo_seo_heads",
-        "0074_suggestion_workflow",
-        "0075_sem_asset_sync_state",
-        "0076_oauth_rebind_intent",
-        "0077_sem_phase1a_shadow",
-        "0078_sem_phase1a_grants",
-        "0079_sem_phase0_sources",
+    sem_ancestors = [
+        "0073_seo_distribution_variants", "0074_merge_geo_seo_heads",
+        "0074_suggestion_workflow", "0075_sem_asset_sync_state", "0076_oauth_rebind_intent",
     ]
+    assert [rev for rev in revisions if rev in sem_ancestors] == sem_ancestors
+    assert "0075_seo_content_source_page" in revisions
+    assert "0077_merge_sem_seo_heads" in revisions
+    assert revisions[-4:] == ["0111_geo_autopatrol", "0112_sem_phase1a_shadow",
+                              "0113_sem_phase1a_grants", "0114_sem_phase0_sources"]
+    assert len(revisions) == len(set(revisions))
+
+
+def test_upgrade_from_production_0111_runs_only_sem_additions():
+    script = ScriptDirectory.from_config(_config())
+    assert [step.revision.revision for step in script._upgrade_revs("head", "0111_geo_autopatrol")] == [
+        "0112_sem_phase1a_shadow", "0113_sem_phase1a_grants", "0114_sem_phase0_sources",
+    ]
+    revisions = list(script.walk_revisions())
+    assert len({rev.revision for rev in revisions}) == len(revisions)
+    assert all(len(rev.revision) <= 32 for rev in revisions)
+
 
 
 @pytest.mark.skipif(
@@ -92,7 +103,7 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
     before = asyncio.run(version())
     assert before == "0073_geo_schema_repair"
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0074_merge_geo_seo_heads")
 
     async def schema_snapshot() -> tuple[str, set[str], set[str]]:
         engine = create_async_engine(async_url)
@@ -125,7 +136,7 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
     after, variant_indexes, publication_indexes = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0079_sem_phase0_sources"
+    assert after == "0074_merge_geo_seo_heads"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

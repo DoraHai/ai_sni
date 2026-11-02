@@ -27,7 +27,7 @@ from test_sem_phase1a_slice3 import migrate
 
 def migrate4(db):
     spec = importlib.util.spec_from_file_location('slice4_migration',
-        Path('migrations/versions/0078_sem_phase1a_grants.py'))
+        Path('migrations/versions/20261103_0113_sem_phase1a_grants.py'))
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     with Operations.context(MigrationContext.configure(db)):
         module.upgrade()
@@ -72,7 +72,7 @@ def test_migration_refuses_dirty_existing_binding_and_downgrade(tmp_path):
         with engine.begin() as db:
             migrate4(db)
     engine.dispose()
-    spec = importlib.util.spec_from_file_location('slice4_down','migrations/versions/0078_sem_phase1a_grants.py')
+    spec = importlib.util.spec_from_file_location('slice4_down','migrations/versions/20261103_0113_sem_phase1a_grants.py')
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     with pytest.raises(RuntimeError, match='downgrade'):
         module.downgrade()
