@@ -1,0 +1,2 @@
+# Optional local screenshot decoder. No OCR/network service dependency.
+Pillow==13.0.0
