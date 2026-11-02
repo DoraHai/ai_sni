@@ -1,0 +1,13 @@
+# Pinned OSS SDK dependency set. Shared cryptography stays in requirements.txt.
+oss2==2.19.1
+aliyun-python-sdk-core==2.16.1
+aliyun-python-sdk-kms==2.16.5
+crcmod==1.7
+jmespath==1.1.0
+pycryptodome==4.2.0
+requests==2.34.2
+certifi==2026.10.23
+charset-normalizer==3.5.2
+idna==3.20
+six==1.17.0
+urllib3==2.8.0

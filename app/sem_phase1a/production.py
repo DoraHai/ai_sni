@@ -1,10 +1,49 @@
 """Production composition using only the caller's existing async DB engine."""
 from contextlib import contextmanager
+import logging
+import os
 
 from app.sem_phase0.postgres_store import SQLAlchemySubmissionStore
 from app.sem_phase1a.postgres_store import SQLAlchemyShadowStore
 from app.sem_phase1a.service import ShadowService
 from app.sem_phase1a.grant_management import AccountGrantService, GrantError
+
+
+ATTACHMENT_OSS_VARIABLES = (
+    'SEM_ATTACHMENT_OSS_BUCKET',
+    'SEM_ATTACHMENT_OSS_ENDPOINT',
+    'SEM_ATTACHMENT_OSS_REGION',
+    'SEM_ATTACHMENT_OSS_ACCESS_KEY_ID',
+    'SEM_ATTACHMENT_OSS_ACCESS_KEY_SECRET',
+)
+
+
+def attachment_store_from_environment():
+    """Construct a client locally; incomplete/invalid config leaves attachments off.
+
+    Never probe/create a bucket, log configuration or report SDK exceptions.
+    The SDK can log endpoints and signed headers at DEBUG, so its diagnostics
+    and the HTTP connection diagnostics are disabled before constructing it.
+    """
+    try:
+        values = [os.environ.get(name, '').strip() for name in ATTACHMENT_OSS_VARIABLES]
+        if not all(values):
+            return None
+        bucket_name, endpoint, region, access_key_id, access_key_secret = values
+        import oss2
+        from app.sem_phase0.oss_attachments import (
+            OSSPrivateAttachmentStore, CONNECT_TIMEOUT_SECONDS, IO_TIMEOUT_SECONDS,
+        )
+        for name in list(logging.Logger.manager.loggerDict):
+            if name == 'oss2' or name.startswith('oss2.') or name == 'urllib3.connectionpool':
+                logging.getLogger(name).disabled = True
+        auth = oss2.AuthV4(access_key_id, access_key_secret)
+        bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region,
+                             connect_timeout=(CONNECT_TIMEOUT_SECONDS, IO_TIMEOUT_SECONDS))
+        return OSSPrivateAttachmentStore(bucket)
+    except Exception:
+        # Config, import and SDK failures must not abort application startup.
+        return None
 
 
 class ProductionAccountGrantService(AccountGrantService):
@@ -55,7 +94,7 @@ def routers(engine, session_factory):
     from app.sem_phase1a.router import create_router as shadow_router
     from app.sem_phase1a.grant_router import create_grant_router
     from app.sem_phase1a.production_principals import production_principal_dependency
-    services = ProductionServices(engine)
+    services = ProductionServices(engine, attachments=attachment_store_from_environment())
     principal = production_principal_dependency()
     return (sources_router(services.proxy('sources'), principal),
             shadow_router(services.proxy('shadow'), principal),
