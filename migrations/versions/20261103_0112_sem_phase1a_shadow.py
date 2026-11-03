@@ -6,8 +6,8 @@ an independently authorized workflow; this slice supplies no grant-writing endpo
 from alembic import op
 import sqlalchemy as sa
 
-revision = '0077_sem_phase1a_shadow'
-down_revision = '0076_oauth_rebind_intent'
+revision = '0112_sem_phase1a_shadow'
+down_revision = '0111_geo_autopatrol'
 branch_labels = None
 depends_on = None
 

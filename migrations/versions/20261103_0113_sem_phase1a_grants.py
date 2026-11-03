@@ -8,8 +8,8 @@ insert/update and parent-update triggers without rebuilding or dropping tables.
 from alembic import op
 import sqlalchemy as sa
 
-revision = '0078_sem_phase1a_grants'
-down_revision = '0077_sem_phase1a_shadow'
+revision = '0113_sem_phase1a_grants'
+down_revision = '0112_sem_phase1a_shadow'
 branch_labels = None
 depends_on = None
 
