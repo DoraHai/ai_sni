@@ -157,6 +157,7 @@ const ALL_GROUPS = computed(() => [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
     { label: '智能搭建', path: '/onboarding/builder', key: 'onboarding' },
     { label: 'SEM 影子规划', path: '/onboarding/sem-shadow', key: 'sem.assets', shadow: true },
+    { label: '账户授权管理', path: '/settings/sem-account-grants', key: 'settings.accounts' },
   ] },
   { label: '每日盯盘', icon: '📊', badge: badges.alerts, badgeCls: '', hint: `未处理告警 ${badges.alerts} 条，今日新增 ${badges.alertsToday} 条`, children: [
     { label: '数据看板', path: '/monitor/dashboard', key: 'monitor.dashboard' },
@@ -183,9 +184,6 @@ const ALL_GROUPS = computed(() => [
   ] },
   { label: '客户交付', icon: '📨', children: [
     { label: '分析报告', path: '/delivery/report', key: 'delivery.report' },
-  ] },
-  { label: '系统设置', icon: '⚙', children: [
-    { label: '账户授权管理', path: '/settings/sem-account-grants', key: 'settings.accounts' },
   ] },
 ])
 

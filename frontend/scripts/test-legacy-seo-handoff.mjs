@@ -100,7 +100,7 @@ import { handoffLegacySeo } from ${JSON.stringify(handoffUrl)};
 const session = globalThis.__handoffSession;
 const currentSeoSiteId = { value: 19 };
 const ElMessage = { error() {}, warning() {} };
-const SEM_PLANNED_CHANNELS = [], COCKPIT_PERMISSION_KEYS = [];
+const SEM_PLANNED_CHANNELS = [], COCKPIT_PERMISSION_KEYS = [], shadowRoutes = [];
 const clearChunkRecoveryMarker = () => {}, recoverFromChunkLoadError = () => false, isChunkLoadError = () => false;
 const semChannelPath = () => '', loginUrl = () => '/login';
 `
