@@ -27,6 +27,8 @@ from app.sem_phase1a.service import ShadowService, digest
 from app.sem_phase1a.sources import FIXTURES, comparisons
 from app.sem_phase1a.store import SQLiteShadowStore
 
+from sem_phase1a_auth_fixture import auth_db, adapter
+
 ROOT = "/api/v1/sem/phase1a/shadow/plans"
 
 
@@ -402,29 +404,6 @@ def test_phase0_read_revalidates_persisted_payload(env, corruption):
             (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")), "wrong" if corruption == "hash" else digest(data)))
     with pytest.raises(ValueError, match="存储校验失败"):
         submissions.read(principal(), 101, 201, "synthetic-page", 1)
-
-
-@pytest.fixture
-def auth_db(tmp_path):
-    path = tmp_path / "synthetic-auth.sqlite"
-    with closing(sqlite3.connect(path)) as db, db:
-        db.executescript("""
-            CREATE TABLE tenants(id INTEGER PRIMARY KEY);
-            INSERT INTO tenants VALUES(101),(102);
-            CREATE TABLE users(id INTEGER PRIMARY KEY,is_active INTEGER,locked_until TEXT,tenant_id INTEGER);
-            CREATE TABLE advisor_tenant_grants(id INTEGER PRIMARY KEY,user_id INTEGER,tenant_id INTEGER,revoked_at TEXT);
-            CREATE TABLE tenant_modules(tenant_id INTEGER,module_code TEXT,status TEXT,expires_at TEXT);
-            CREATE TABLE baidu_accounts(id INTEGER PRIMARY KEY,tenant_id INTEGER,status TEXT);
-            INSERT INTO users VALUES(1,1,NULL,NULL),(2,1,NULL,101),(3,1,NULL,102);
-            INSERT INTO advisor_tenant_grants VALUES(10,1,101,NULL),(20,1,102,NULL);
-            INSERT INTO tenant_modules VALUES(101,'sem','active',NULL),(102,'sem','trial',NULL);
-            INSERT INTO baidu_accounts VALUES(201,101,'active'),(202,102,'active'),(203,101,'inactive');
-        """)
-    return path
-
-
-def adapter(path):
-    return LocalGrantPrincipalAdapter(path, clock=lambda: datetime.fromisoformat("2026-10-29T00:00:00+08:00"))
 
 
 def test_authorization_read_only_and_no_cache(auth_db):

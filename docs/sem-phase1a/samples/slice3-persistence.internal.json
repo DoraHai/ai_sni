@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "restart_version": 3,
+  "replay_code": "VERSION_CONFLICT",
+  "executable": false,
+  "go_live_allowed": false,
+  "production_router_mounted": false,
+  "production_database_connected": false
+}

@@ -42,7 +42,9 @@ def create_router(service: ShadowService, resolve_principal):
             raise HTTPException(404, {"code": "NOT_FOUND", "message": "合成演练记录不存在"}) from None
         except ShadowError as exc:
             raise HTTPException(422, {"code": exc.code, "message": "演练检查未通过，请按错误码修订"}) from None
-        except (ValueError, PermissionError):
+        except PermissionError:
+            raise HTTPException(403, {"code": "OPERATION_FORBIDDEN", "message": "该演练操作未获准"}) from None
+        except ValueError:
             raise HTTPException(422, {"code": "CONTRACT_INVALID", "message": "演练契约或检查不满足"}) from None
 
     @router.post("/plans", status_code=201)

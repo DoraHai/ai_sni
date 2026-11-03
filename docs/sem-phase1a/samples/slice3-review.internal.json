@@ -1,0 +1,1162 @@
+{
+  "approvals": {
+    "r-1": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-10": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-11": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-12": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-13": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-14": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-15": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-2": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-3": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-4": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-5": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-6": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-7": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-8": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    },
+    "r-9": {
+      "actor": "1",
+      "internal_rehearsal_only": true,
+      "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+      "reason": "合成演练复核",
+      "version": 2
+    }
+  },
+  "audit": [
+    {
+      "action": "created",
+      "actor": "1",
+      "at": "2026-10-28T19:23:22.205208+00:00",
+      "details": {
+        "submission_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964"
+      },
+      "ordinal": 1,
+      "previous_sha256": null,
+      "sha256": "7b6158b3cab12ce8aee7f1b155f4898c8df0c0de590289c35a19d32f11821837",
+      "version": 1
+    },
+    {
+      "action": "sources_adjudicated_and_generated",
+      "actor": "1",
+      "at": "2026-10-28T19:23:22.210127+00:00",
+      "details": {
+        "reason": "合成演练裁定",
+        "selected": {
+          "benefit": "s-2",
+          "bid_cap_cents": "s-14",
+          "brand_rules": "s-18",
+          "budget_cents": "s-11",
+          "budget_period": "s-12",
+          "currency": "s-13",
+          "ends_at": "s-21",
+          "goal": "s-10",
+          "keywords": "s-3",
+          "negative_keywords": "s-19",
+          "product": "s-1",
+          "regions": "s-15",
+          "schedule": "s-17",
+          "starts_at": "s-20",
+          "timezone": "s-16"
+        }
+      },
+      "ordinal": 2,
+      "previous_sha256": "7b6158b3cab12ce8aee7f1b155f4898c8df0c0de590289c35a19d32f11821837",
+      "sha256": "f71bd1633d97a552951cd21460230171191e7ebd8c81f8c1018a5c73dcd006ff",
+      "version": 2
+    },
+    {
+      "action": "rows_reviewed_internal_only",
+      "actor": "1",
+      "at": "2026-10-28T19:23:22.219116+00:00",
+      "details": {
+        "reason": "合成演练复核",
+        "row_ids": [
+          "r-1",
+          "r-2",
+          "r-3",
+          "r-4",
+          "r-5",
+          "r-6",
+          "r-7",
+          "r-8",
+          "r-9",
+          "r-10",
+          "r-11",
+          "r-12",
+          "r-13",
+          "r-14",
+          "r-15"
+        ]
+      },
+      "ordinal": 3,
+      "previous_sha256": "f71bd1633d97a552951cd21460230171191e7ebd8c81f8c1018a5c73dcd006ff",
+      "sha256": "2b9511e3cad30fe81a6160252337b666911004c01a2042cf35fe699d2fde99ec",
+      "version": 2
+    },
+    {
+      "action": "excel_exported_internal_only",
+      "actor": "1",
+      "at": "2026-10-28T19:23:22.553030+00:00",
+      "details": {
+        "audience": "customer",
+        "file_sha256": "415907d205defca584f50ba5d7ff03730d3a838e8cc6c1a71ab170411746ba53"
+      },
+      "ordinal": 4,
+      "previous_sha256": "2b9511e3cad30fe81a6160252337b666911004c01a2042cf35fe699d2fde99ec",
+      "sha256": "83f7f1e702dccc96056cf13a84556d084f7dd6b14bef682665193bd2e5281f94",
+      "version": 2
+    }
+  ],
+  "backend": "fixture",
+  "budget_cap_cents": 100000,
+  "comparisons": [
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+          "field": "benefit",
+          "locator": "fixture:launch/fixture_html/benefit;page:synthetic-page;revision:1",
+          "origin": "fixture_html",
+          "source_id": "s-2",
+          "value": "合成可更换滤芯服务"
+        },
+        {
+          "artifact_sha256": "904c9332f7bc7a30d2f7df39ad87f4da470c3015059fcd3f3a355631660771c2",
+          "field": "benefit",
+          "locator": "fixture:launch/fixture_ocr/benefit;page:synthetic-page;revision:1",
+          "origin": "fixture_ocr",
+          "source_id": "s-5",
+          "value": "合成可替换滤芯服务"
+        },
+        {
+          "artifact_sha256": "23cf9a7ca76d73b78a23a00b7d032f7120c253865b07ad596d10361e504f43b2",
+          "field": "benefit",
+          "locator": "fixture:launch/submission/benefit;page:synthetic-page;revision:1",
+          "origin": "submission",
+          "source_id": "s-8",
+          "value": "合成可换滤芯服务"
+        }
+      ],
+      "conflict": true,
+      "default_source_id": "s-2",
+      "field": "benefit"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "bid_cap_cents",
+          "locator": "phase0:synthetic-page/revision:1/bid_cap_cents",
+          "origin": "submission",
+          "source_id": "s-14",
+          "value": "200"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-14",
+      "field": "bid_cap_cents"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "brand_rules",
+          "locator": "phase0:synthetic-page/revision:1/brand_rules",
+          "origin": "submission",
+          "source_id": "s-18",
+          "value": "\"仅使用合成星河品牌\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-18",
+      "field": "brand_rules"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "budget_cents",
+          "locator": "phase0:synthetic-page/revision:1/budget_cents",
+          "origin": "submission",
+          "source_id": "s-11",
+          "value": "12000"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-11",
+      "field": "budget_cents"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "budget_period",
+          "locator": "phase0:synthetic-page/revision:1/budget_period",
+          "origin": "submission",
+          "source_id": "s-12",
+          "value": "\"daily\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-12",
+      "field": "budget_period"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "currency",
+          "locator": "phase0:synthetic-page/revision:1/currency",
+          "origin": "submission",
+          "source_id": "s-13",
+          "value": "\"CNY\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-13",
+      "field": "currency"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "ends_at",
+          "locator": "phase0:synthetic-page/revision:1/ends_at",
+          "origin": "submission",
+          "source_id": "s-21",
+          "value": "\"2026-11-08T18:00:00+08:00\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-21",
+      "field": "ends_at"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "goal",
+          "locator": "phase0:synthetic-page/revision:1/goal",
+          "origin": "submission",
+          "source_id": "s-10",
+          "value": "\"合成咨询\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-10",
+      "field": "goal"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+          "field": "keywords",
+          "locator": "fixture:launch/fixture_html/keywords;page:synthetic-page;revision:1",
+          "origin": "fixture_html",
+          "source_id": "s-3",
+          "value": "合成滤芯,合成滤芯咨询"
+        },
+        {
+          "artifact_sha256": "904c9332f7bc7a30d2f7df39ad87f4da470c3015059fcd3f3a355631660771c2",
+          "field": "keywords",
+          "locator": "fixture:launch/fixture_ocr/keywords;page:synthetic-page;revision:1",
+          "origin": "fixture_ocr",
+          "source_id": "s-6",
+          "value": "合成滤芯,合成滤芯咨询"
+        },
+        {
+          "artifact_sha256": "23cf9a7ca76d73b78a23a00b7d032f7120c253865b07ad596d10361e504f43b2",
+          "field": "keywords",
+          "locator": "fixture:launch/submission/keywords;page:synthetic-page;revision:1",
+          "origin": "submission",
+          "source_id": "s-9",
+          "value": "合成滤芯,合成滤芯咨询"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-3",
+      "field": "keywords"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "negative_keywords",
+          "locator": "phase0:synthetic-page/revision:1/negative_keywords",
+          "origin": "submission",
+          "source_id": "s-19",
+          "value": "[\"合成免费维修\"]"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-19",
+      "field": "negative_keywords"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+          "field": "product",
+          "locator": "fixture:launch/fixture_html/product;page:synthetic-page;revision:1",
+          "origin": "fixture_html",
+          "source_id": "s-1",
+          "value": "合成星河滤芯"
+        },
+        {
+          "artifact_sha256": "904c9332f7bc7a30d2f7df39ad87f4da470c3015059fcd3f3a355631660771c2",
+          "field": "product",
+          "locator": "fixture:launch/fixture_ocr/product;page:synthetic-page;revision:1",
+          "origin": "fixture_ocr",
+          "source_id": "s-4",
+          "value": "合成星河滤芯"
+        },
+        {
+          "artifact_sha256": "23cf9a7ca76d73b78a23a00b7d032f7120c253865b07ad596d10361e504f43b2",
+          "field": "product",
+          "locator": "fixture:launch/submission/product;page:synthetic-page;revision:1",
+          "origin": "submission",
+          "source_id": "s-7",
+          "value": "合成星河滤芯"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-1",
+      "field": "product"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "regions",
+          "locator": "phase0:synthetic-page/revision:1/regions",
+          "origin": "submission",
+          "source_id": "s-15",
+          "value": "[\"合成地域\"]"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-15",
+      "field": "regions"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "schedule",
+          "locator": "phase0:synthetic-page/revision:1/schedule",
+          "origin": "submission",
+          "source_id": "s-17",
+          "value": "[{\"days\": [1, 2, 3, 4, 5], \"start_hour\": 9, \"end_hour\": 18}]"
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-17",
+      "field": "schedule"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "starts_at",
+          "locator": "phase0:synthetic-page/revision:1/starts_at",
+          "origin": "submission",
+          "source_id": "s-20",
+          "value": "\"2026-11-01T09:00:00+08:00\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-20",
+      "field": "starts_at"
+    },
+    {
+      "candidates": [
+        {
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "field": "timezone",
+          "locator": "phase0:synthetic-page/revision:1/timezone",
+          "origin": "submission",
+          "source_id": "s-16",
+          "value": "\"Asia/Shanghai\""
+        }
+      ],
+      "conflict": false,
+      "default_source_id": "s-16",
+      "field": "timezone"
+    }
+  ],
+  "customer_confirmation": "pending",
+  "enable_allowed": false,
+  "execution_export_enabled": false,
+  "existing_assets": [
+    {
+      "asset_id": "synthetic-existing-1",
+      "kind": "keyword",
+      "text": "合成旧型号滤芯"
+    }
+  ],
+  "generator": "deterministic_rules",
+  "history": [
+    {
+      "approvals": {},
+      "rows": [],
+      "selected": {},
+      "version": 1
+    }
+  ],
+  "mode": "rehearsal",
+  "plan_id": "bb69ac8d37164579ad738d4c2def14d7",
+  "rows": [
+    {
+      "budget_cents": 12000,
+      "kind": "project",
+      "parent_id": null,
+      "row_id": "r-1",
+      "source_refs": [
+        "s-1",
+        "s-11"
+      ],
+      "text": "合成星河滤芯",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": 12000,
+      "kind": "campaign",
+      "parent_id": "r-1",
+      "row_id": "r-2",
+      "source_refs": [
+        "s-1",
+        "s-11"
+      ],
+      "text": "合成星河滤芯合成方案",
+      "verification": "pending_verification"
+    },
+    {
+      "budget_cents": 12000,
+      "kind": "unit",
+      "parent_id": "r-2",
+      "row_id": "r-3",
+      "source_refs": [
+        "s-1",
+        "s-11"
+      ],
+      "text": "合成星河滤芯合成单元",
+      "verification": "pending_verification"
+    },
+    {
+      "budget_cents": null,
+      "kind": "keyword",
+      "parent_id": "r-3",
+      "row_id": "r-4",
+      "source_refs": [
+        "s-3"
+      ],
+      "text": "合成滤芯",
+      "verification": "pending_verification"
+    },
+    {
+      "budget_cents": null,
+      "kind": "keyword",
+      "parent_id": "r-3",
+      "row_id": "r-5",
+      "source_refs": [
+        "s-3"
+      ],
+      "text": "合成滤芯咨询",
+      "verification": "pending_verification"
+    },
+    {
+      "budget_cents": null,
+      "kind": "basic_creative",
+      "parent_id": "r-3",
+      "row_id": "r-6",
+      "source_refs": [
+        "s-1",
+        "s-2"
+      ],
+      "text": "合成星河滤芯：合成可更换滤芯服务",
+      "verification": "pending_verification"
+    },
+    {
+      "budget_cents": null,
+      "kind": "advanced_creative_placeholder",
+      "parent_id": "r-3",
+      "row_id": "r-7",
+      "source_refs": [
+        "s-1",
+        "s-2"
+      ],
+      "text": "高级创意占位，形式与素材待核实",
+      "verification": "pending_verification"
+    },
+    {
+      "budget_cents": null,
+      "kind": "negative_keyword",
+      "parent_id": "r-2",
+      "row_id": "r-8",
+      "source_refs": [
+        "s-19"
+      ],
+      "text": "合成免费维修",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "budget",
+      "parent_id": "r-2",
+      "row_id": "r-9",
+      "source_refs": [
+        "s-11",
+        "s-12",
+        "s-13"
+      ],
+      "text": "12000",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "region",
+      "parent_id": "r-2",
+      "row_id": "r-10",
+      "source_refs": [
+        "s-15"
+      ],
+      "text": "[\"合成地域\"]",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "schedule",
+      "parent_id": "r-2",
+      "row_id": "r-11",
+      "source_refs": [
+        "s-17",
+        "s-16"
+      ],
+      "text": "[{\"days\": [1, 2, 3, 4, 5], \"start_hour\": 9, \"end_hour\": 18}]",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "bid_cap",
+      "parent_id": "r-2",
+      "row_id": "r-12",
+      "source_refs": [
+        "s-14"
+      ],
+      "text": "200",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "brand_rule",
+      "parent_id": "r-2",
+      "row_id": "r-13",
+      "source_refs": [
+        "s-18"
+      ],
+      "text": "\"仅使用合成星河品牌\"",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "goal",
+      "parent_id": "r-2",
+      "row_id": "r-14",
+      "source_refs": [
+        "s-10"
+      ],
+      "text": "\"合成咨询\"",
+      "verification": "source_confirmed"
+    },
+    {
+      "budget_cents": null,
+      "kind": "timing",
+      "parent_id": "r-2",
+      "row_id": "r-15",
+      "source_refs": [
+        "s-20",
+        "s-21"
+      ],
+      "text": "\"2026-11-01T09:00:00+08:00\" 至 \"2026-11-08T18:00:00+08:00\"",
+      "verification": "source_confirmed"
+    }
+  ],
+  "rulings": [
+    {
+      "actor": "1",
+      "decisions": {
+        "benefit": {
+          "actor": "1",
+          "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+          "at": "2026-10-28T19:23:22.210083+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-2"
+        },
+        "bid_cap_cents": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210092+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-14"
+        },
+        "brand_rules": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210095+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-18"
+        },
+        "budget_cents": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210098+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-11"
+        },
+        "budget_period": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210100+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-12"
+        },
+        "currency": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210103+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-13"
+        },
+        "ends_at": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210105+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-21"
+        },
+        "goal": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210108+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-10"
+        },
+        "keywords": {
+          "actor": "1",
+          "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+          "at": "2026-10-28T19:23:22.210110+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-3"
+        },
+        "negative_keywords": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210112+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-19"
+        },
+        "product": {
+          "actor": "1",
+          "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+          "at": "2026-10-28T19:23:22.210114+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-1"
+        },
+        "regions": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210117+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-15"
+        },
+        "schedule": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210119+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-17"
+        },
+        "starts_at": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210121+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-20"
+        },
+        "timezone": {
+          "actor": "1",
+          "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+          "at": "2026-10-28T19:23:22.210123+00:00",
+          "reason": "合成演练裁定",
+          "source_id": "s-16"
+        }
+      },
+      "reason": "合成演练裁定",
+      "selected": {
+        "benefit": "s-2",
+        "bid_cap_cents": "s-14",
+        "brand_rules": "s-18",
+        "budget_cents": "s-11",
+        "budget_period": "s-12",
+        "currency": "s-13",
+        "ends_at": "s-21",
+        "goal": "s-10",
+        "keywords": "s-3",
+        "negative_keywords": "s-19",
+        "product": "s-1",
+        "regions": "s-15",
+        "schedule": "s-17",
+        "starts_at": "s-20",
+        "timezone": "s-16"
+      },
+      "version": 2
+    }
+  ],
+  "selected": {
+    "benefit": "s-2",
+    "bid_cap_cents": "s-14",
+    "brand_rules": "s-18",
+    "budget_cents": "s-11",
+    "budget_period": "s-12",
+    "currency": "s-13",
+    "ends_at": "s-21",
+    "goal": "s-10",
+    "keywords": "s-3",
+    "negative_keywords": "s-19",
+    "product": "s-1",
+    "regions": "s-15",
+    "schedule": "s-17",
+    "starts_at": "s-20",
+    "timezone": "s-16"
+  },
+  "sources": [
+    {
+      "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+      "field": "product",
+      "locator": "fixture:launch/fixture_html/product;page:synthetic-page;revision:1",
+      "origin": "fixture_html",
+      "source_id": "s-1",
+      "value": "合成星河滤芯"
+    },
+    {
+      "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+      "field": "benefit",
+      "locator": "fixture:launch/fixture_html/benefit;page:synthetic-page;revision:1",
+      "origin": "fixture_html",
+      "source_id": "s-2",
+      "value": "合成可更换滤芯服务"
+    },
+    {
+      "artifact_sha256": "f4b220bb72a7e1ad96b7f400c956f2c5e80a5e85a760ea7447a252cfce0d0ab1",
+      "field": "keywords",
+      "locator": "fixture:launch/fixture_html/keywords;page:synthetic-page;revision:1",
+      "origin": "fixture_html",
+      "source_id": "s-3",
+      "value": "合成滤芯,合成滤芯咨询"
+    },
+    {
+      "artifact_sha256": "904c9332f7bc7a30d2f7df39ad87f4da470c3015059fcd3f3a355631660771c2",
+      "field": "product",
+      "locator": "fixture:launch/fixture_ocr/product;page:synthetic-page;revision:1",
+      "origin": "fixture_ocr",
+      "source_id": "s-4",
+      "value": "合成星河滤芯"
+    },
+    {
+      "artifact_sha256": "904c9332f7bc7a30d2f7df39ad87f4da470c3015059fcd3f3a355631660771c2",
+      "field": "benefit",
+      "locator": "fixture:launch/fixture_ocr/benefit;page:synthetic-page;revision:1",
+      "origin": "fixture_ocr",
+      "source_id": "s-5",
+      "value": "合成可替换滤芯服务"
+    },
+    {
+      "artifact_sha256": "904c9332f7bc7a30d2f7df39ad87f4da470c3015059fcd3f3a355631660771c2",
+      "field": "keywords",
+      "locator": "fixture:launch/fixture_ocr/keywords;page:synthetic-page;revision:1",
+      "origin": "fixture_ocr",
+      "source_id": "s-6",
+      "value": "合成滤芯,合成滤芯咨询"
+    },
+    {
+      "artifact_sha256": "23cf9a7ca76d73b78a23a00b7d032f7120c253865b07ad596d10361e504f43b2",
+      "field": "product",
+      "locator": "fixture:launch/submission/product;page:synthetic-page;revision:1",
+      "origin": "submission",
+      "source_id": "s-7",
+      "value": "合成星河滤芯"
+    },
+    {
+      "artifact_sha256": "23cf9a7ca76d73b78a23a00b7d032f7120c253865b07ad596d10361e504f43b2",
+      "field": "benefit",
+      "locator": "fixture:launch/submission/benefit;page:synthetic-page;revision:1",
+      "origin": "submission",
+      "source_id": "s-8",
+      "value": "合成可换滤芯服务"
+    },
+    {
+      "artifact_sha256": "23cf9a7ca76d73b78a23a00b7d032f7120c253865b07ad596d10361e504f43b2",
+      "field": "keywords",
+      "locator": "fixture:launch/submission/keywords;page:synthetic-page;revision:1",
+      "origin": "submission",
+      "source_id": "s-9",
+      "value": "合成滤芯,合成滤芯咨询"
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "goal",
+      "locator": "phase0:synthetic-page/revision:1/goal",
+      "origin": "submission",
+      "source_id": "s-10",
+      "value": "\"合成咨询\""
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "budget_cents",
+      "locator": "phase0:synthetic-page/revision:1/budget_cents",
+      "origin": "submission",
+      "source_id": "s-11",
+      "value": "12000"
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "budget_period",
+      "locator": "phase0:synthetic-page/revision:1/budget_period",
+      "origin": "submission",
+      "source_id": "s-12",
+      "value": "\"daily\""
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "currency",
+      "locator": "phase0:synthetic-page/revision:1/currency",
+      "origin": "submission",
+      "source_id": "s-13",
+      "value": "\"CNY\""
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "bid_cap_cents",
+      "locator": "phase0:synthetic-page/revision:1/bid_cap_cents",
+      "origin": "submission",
+      "source_id": "s-14",
+      "value": "200"
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "regions",
+      "locator": "phase0:synthetic-page/revision:1/regions",
+      "origin": "submission",
+      "source_id": "s-15",
+      "value": "[\"合成地域\"]"
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "timezone",
+      "locator": "phase0:synthetic-page/revision:1/timezone",
+      "origin": "submission",
+      "source_id": "s-16",
+      "value": "\"Asia/Shanghai\""
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "schedule",
+      "locator": "phase0:synthetic-page/revision:1/schedule",
+      "origin": "submission",
+      "source_id": "s-17",
+      "value": "[{\"days\": [1, 2, 3, 4, 5], \"start_hour\": 9, \"end_hour\": 18}]"
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "brand_rules",
+      "locator": "phase0:synthetic-page/revision:1/brand_rules",
+      "origin": "submission",
+      "source_id": "s-18",
+      "value": "\"仅使用合成星河品牌\""
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "negative_keywords",
+      "locator": "phase0:synthetic-page/revision:1/negative_keywords",
+      "origin": "submission",
+      "source_id": "s-19",
+      "value": "[\"合成免费维修\"]"
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "starts_at",
+      "locator": "phase0:synthetic-page/revision:1/starts_at",
+      "origin": "submission",
+      "source_id": "s-20",
+      "value": "\"2026-11-01T09:00:00+08:00\""
+    },
+    {
+      "artifact_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+      "field": "ends_at",
+      "locator": "phase0:synthetic-page/revision:1/ends_at",
+      "origin": "submission",
+      "source_id": "s-21",
+      "value": "\"2026-11-08T18:00:00+08:00\""
+    }
+  ],
+  "submission": {
+    "account_id": 201,
+    "account_ready": true,
+    "authorized_scope": "仅合成本地演练",
+    "bid_cap_cents": 200,
+    "brand_rules": "仅使用合成星河品牌",
+    "budget_cents": 12000,
+    "budget_period": "daily",
+    "case_type": "event",
+    "currency": "CNY",
+    "ends_at": "2026-11-08T18:00:00+08:00",
+    "expected_revision": 0,
+    "goal": "合成咨询",
+    "landing_page_id": "synthetic-page",
+    "landing_url": "https://example.invalid/synthetic-launch",
+    "link_source": "group",
+    "negative_keywords": [
+      "合成免费维修"
+    ],
+    "no_deadline_explicit": false,
+    "page_content": "product: 合成星河滤芯\nbenefit: 合成可换滤芯服务\nkeywords: 合成滤芯,合成滤芯咨询",
+    "product_line_id": "synthetic-filter",
+    "regions": [
+      "合成地域"
+    ],
+    "schedule": [
+      {
+        "days": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "end_hour": 18,
+        "start_hour": 9
+      }
+    ],
+    "starts_at": "2026-11-01T09:00:00+08:00",
+    "tenant_id": 101,
+    "timezone": "Asia/Shanghai"
+  },
+  "submission_revision": 1,
+  "submission_sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964",
+  "submissions": [
+    {
+      "payload": {
+        "account_id": 201,
+        "account_ready": true,
+        "authorized_scope": "仅合成本地演练",
+        "bid_cap_cents": 200,
+        "brand_rules": "仅使用合成星河品牌",
+        "budget_cents": 12000,
+        "budget_period": "daily",
+        "case_type": "event",
+        "currency": "CNY",
+        "ends_at": "2026-11-08T18:00:00+08:00",
+        "expected_revision": 0,
+        "goal": "合成咨询",
+        "landing_page_id": "synthetic-page",
+        "landing_url": "https://example.invalid/synthetic-launch",
+        "link_source": "group",
+        "negative_keywords": [
+          "合成免费维修"
+        ],
+        "no_deadline_explicit": false,
+        "page_content": "product: 合成星河滤芯\nbenefit: 合成可换滤芯服务\nkeywords: 合成滤芯,合成滤芯咨询",
+        "product_line_id": "synthetic-filter",
+        "regions": [
+          "合成地域"
+        ],
+        "schedule": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "end_hour": 18,
+            "start_hour": 9
+          }
+        ],
+        "starts_at": "2026-11-01T09:00:00+08:00",
+        "tenant_id": 101,
+        "timezone": "Asia/Shanghai"
+      },
+      "prefix": "",
+      "revision": 1,
+      "sha256": "e3bfe10ee548afb570512b72f80bcd3efb7d1ba259b1f03559a692e9cdc41964"
+    }
+  ],
+  "synthetic": true,
+  "version": 2,
+  "warning": "内部规划/演练，不可上传百度",
+  "p5": {
+    "passed": true,
+    "issues": [],
+    "scope": "batch_and_existing_synthetic_assets"
+  },
+  "p6": {
+    "rules_version": "phase1a-fixture-only-v1",
+    "passed": false,
+    "issues": [
+      {
+        "rule": "platform_limits",
+        "row_id": null,
+        "reason": "平台限制待核实",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-2",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-3",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-4",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-5",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-6",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "source_complete",
+        "row_id": "r-7",
+        "reason": "来源缺失或未复核",
+        "blocking": true
+      },
+      {
+        "rule": "online_facts",
+        "row_id": null,
+        "reason": "占位检查未知或未通过",
+        "blocking": true
+      }
+    ],
+    "execution_export_enabled": false,
+    "customer_confirmation": "pending"
+  },
+  "advisor_review_complete": true,
+  "plan_sha256": "9631ca83f2b545a4c9a8b88bb184d7841c568af9f5bfb225f9638af7e7c5c1ea",
+  "state": "shadow_review",
+  "executable": false,
+  "go_live_allowed": false,
+  "review_status_label": "演练复核完成，不可执行、不可上线",
+  "rehearsal_only_blockers": [
+    "platform_limits",
+    "source_complete",
+    "source_complete",
+    "source_complete",
+    "source_complete",
+    "source_complete",
+    "source_complete",
+    "online_facts",
+    "formal_customer_confirmation_pending",
+    "execution_disabled",
+    "go_live_disabled"
+  ]
+}

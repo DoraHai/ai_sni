@@ -1,0 +1,18 @@
+{
+  "synthetic": true,
+  "advisor_accounts": [
+    [
+      101,
+      201
+    ]
+  ],
+  "customer_readable": [
+    [
+      101,
+      201
+    ]
+  ],
+  "customer_writable": [],
+  "ungranted_active_account_excluded": true,
+  "db_session_role_mismatch_denied": true
+}

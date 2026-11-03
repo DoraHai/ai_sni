@@ -36,7 +36,7 @@ def check_scope(principal: AdvisorPrincipal, tenant_id: int, account_id: int, *,
                principal.readable_accounts | (principal.writable_accounts if principal.role == "advisor" else frozenset()))
     if ((write and principal.role != "advisor") or principal.role not in {"advisor", "customer"}
             or not principal.actor_id.strip() or (tenant_id, account_id) not in allowed):
-        raise ScopeDenied("无该租户账户的顾问提交权限")
+        raise ScopeDenied("无该租户账户的顾问提交权限" if write else "无该租户账户的读取权限")
 
 
 class SubmissionStore:

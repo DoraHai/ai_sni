@@ -136,7 +136,12 @@ class ShadowService:
         result["state"] = "shadow_review" if rows else "awaiting_ruling"
         # Delivery flags are immutable constants, even if a local snapshot was modified.
         result.update(mode="rehearsal", customer_confirmation="pending",
-                      execution_export_enabled=False, enable_allowed=False)
+                      execution_export_enabled=False, enable_allowed=False,
+                      executable=False, go_live_allowed=False,
+                      review_status_label="演练复核完成，不可执行、不可上线" if result["advisor_review_complete"]
+                      else "待演练复核，不可执行、不可上线",
+                      rehearsal_only_blockers=[i["rule"] for i in result["p6"]["issues"] if i.get("blocking")]
+                      + ["formal_customer_confirmation_pending", "execution_disabled", "go_live_disabled"])
         return result
 
     def read(self, principal, plan_id):
@@ -153,7 +158,7 @@ class ShadowService:
             by_id = {s["source_id"]: s for s in state["sources"]}
             for field, source_id in request.choices.items():
                 if field not in selected or source_id not in by_id or by_id[source_id]["field"] != field:
-                    raise ValueError("裁定只能选择该字段的已记录来源")
+                    raise ShadowError("RULING_SOURCE_INVALID", "裁定只能选择该字段的已记录来源")
                 selected[field] = source_id
             rows = [r.model_dump() for r in generate_bundle(
                 [(LandingSubmission.model_validate(e["payload"]), e["prefix"]) for e in state["submissions"]],
@@ -203,6 +208,8 @@ class ShadowService:
             preview = {"preview_id": preview_id, "plan_id": plan_id, "base_version": state["version"],
                        "audience": audience, "changes": changed, "p5": report["p5"], "p6": report["p6"],
                        "rehearsal_only": True, "customer_confirmation": "pending", "applied": False,
+                       "executable": False, "go_live_allowed": False,
+                       "rehearsal_only_blockers": report["rehearsal_only_blockers"],
                        "expires_at": self.clock() + self.preview_ttl}
             tx.previews[preview_id] = {"preview": preview, "rows": parsed}
             self._audit(state, principal, "excel_preview_only", {"preview_id": preview_id, "audience": audience,
@@ -222,7 +229,7 @@ class ShadowService:
             if preview["expires_at"] <= self.clock():
                 raise ShadowError("PREVIEW_EXPIRED", "预览已过期")
             if preview["audience"] != "advisor":
-                raise ValueError("客户演练差异只预览，不导入正式确认链")
+                raise ShadowError("PREVIEW_AUDIENCE_ADVISOR_ONLY", "客户演练差异只预览，不导入正式确认链")
             if preview["applied"] or preview["base_version"] != state["version"]:
                 raise RevisionConflict("预览已应用或版本已过期")
             self._archive(state)
@@ -241,7 +248,7 @@ class ShadowService:
             if not state["rows"]:
                 raise ShadowError("STRUCTURE_INVALID", "先完成来源裁定")
             self._archive(state)
-            for operation in request.operations:
+            for step_index, operation in enumerate(request.operations, 1):
                 before = copy.deepcopy(state["rows"])
                 state["rows"] = edit_rows(state["rows"], operation, state["sources"])
                 report = self._view(state)
@@ -250,7 +257,7 @@ class ShadowService:
                 affected = {key for key in before_ids.keys() | after_ids.keys()
                             if before_ids.get(key) != after_ids.get(key)}
                 self._audit(state, principal, "structure_edited", {
-                    "operation": operation.model_dump(), "reason": request.reason,
+                    "step_index": step_index, "operation": operation.model_dump(), "reason": request.reason,
                     "before": [r for r in before if r["row_id"] in affected],
                     "after": [r for r in state["rows"] if r["row_id"] in affected],
                     "p5": report["p5"], "p6": report["p6"]})
@@ -273,10 +280,10 @@ class ShadowService:
                 code = next(rule_codes[i["rule"]] for i in view["p6"]["issues"] if i["rule"] in rule_codes)
                 raise ShadowError(code, "存在可修订的硬检查问题，先修改并重查")
             if not state["rows"] or len(set(request.row_ids)) != len(request.row_ids):
-                raise ValueError("逐项批准列表为空或重复")
+                raise ShadowError("APPROVAL_ROWS_INVALID", "逐项批准列表为空或重复")
             ids = {r["row_id"] for r in state["rows"]}
             if not set(request.row_ids) <= ids:
-                raise ValueError("批准行不存在")
+                raise ShadowError("APPROVAL_ROWS_INVALID", "批准行不存在")
             for row_id in request.row_ids:
                 state["approvals"][row_id] = {"actor": principal.actor_id, "reason": request.reason,
                     "version": state["version"], "plan_sha256": view["plan_sha256"], "internal_rehearsal_only": True}
@@ -290,9 +297,9 @@ class ShadowService:
             state = self._state(tx, principal, plan_id)
             view = self._view(state)
             if not view["rows"]:
-                raise ValueError("先完成来源裁定")
+                raise ShadowError("RULING_REQUIRED", "先完成来源裁定")
             if audience == "customer" and not view["advisor_review_complete"]:
-                raise ValueError("客户演练样例须先完成顾问逐项复核")
+                raise ShadowError("ADVISOR_REVIEW_REQUIRED", "客户演练样例须先完成顾问逐项复核")
             data = write_workbook(view, audience)
             self._audit(state, principal, "excel_exported_internal_only", {"audience": audience,
                                                                           "file_sha256": hashlib.sha256(data).hexdigest()})
@@ -302,7 +309,7 @@ class ShadowService:
         with self.store.transaction() as tx:
             state = self._state(tx, principal, plan_id, write=False)
             if not state["rows"]:
-                raise ValueError("先生成影子规划")
+                raise ShadowError("RULING_REQUIRED", "先生成影子规划")
             suggestions = []
             for entry in state["submissions"]:
                 payload = LandingSubmission.model_validate(entry["payload"])
