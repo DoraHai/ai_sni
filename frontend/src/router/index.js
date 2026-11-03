@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { shadowRoutes } from './shadowRoutes'
 import { ElMessage } from 'element-plus'
 import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError } from './chunkRecovery'
 import { session } from '../store/session'
@@ -24,6 +25,7 @@ function firstPlatformPath() {
 }
 
 const routes = [
+  ...shadowRoutes,
   ...SEM_PLANNED_CHANNELS.map((channel) => ({
     path: semChannelPath(channel.id),
     component: () => import('../views/manage/SemChannelComingSoonView.vue'),
