@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run test:sem-shadow && vite build",
     "dev:auth": "vite --config vite.auth.config.js",
     "build:auth": "vite build --config vite.auth.config.js",
     "build:seo": "vite build --config vite.seo.config.js",
@@ -21,7 +21,8 @@
     "deploy:diagnostic-center": "bash scripts/deploy-diagnostic-center.sh",
     "build:website": "vite build --config vite.website.config.js",
     "deploy:website": "bash scripts/deploy-website.sh",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:sem-shadow": "node scripts/test-sem-shadow.mjs"
   },
   "dependencies": {
     "axios": "^1.18.0",

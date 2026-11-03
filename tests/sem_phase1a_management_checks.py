@@ -23,6 +23,7 @@ async def run_checks(factory, token):
     from app.database import get_session
     from app.models.role import Role
     from app.models.user import User
+    from app.models.advisor_tenant_grant import AdvisorTenantGrant
     from app.permissions import ALL_EDIT, CLIENT_PERMS
     from app.security.auth import AuthContext, require_admin
     spec = importlib.util.spec_from_file_location('slice4', 'migrations/versions/0078_sem_phase1a_grants.py')
@@ -36,9 +37,14 @@ async def run_checks(factory, token):
         session.add_all([Role(id=3, name='管理员', is_system=True, permissions=ALL_EDIT),
                          Role(id=4, name='合成平台管理员', is_system=False,
                               permissions={'settings.accounts':'edit','settings.customers':'edit'}),
+                         User(id=6, username='synthetic-spare', password_hash='unused', role_id=1, tenant_id=101),
                          User(id=9, username='synthetic-admin', password_hash='unused', role_id=3),
                          User(id=8, username='synthetic-platform-admin', password_hash='unused', role_id=4),
                          User(id=7, username='synthetic-other-customer', password_hash='unused', role_id=2, tenant_id=102)])
+        await session.flush()
+        session.add(AdvisorTenantGrant(id=16,user_id=6,tenant_id=101,grant_source='admin',granted_by=9))
+        await session.flush()
+        await session.execute(text('INSERT INTO sem_phase1a_account_grants(user_id,tenant_id,account_id,advisor_grant_id) VALUES(6,101,204,16)'))
     service = AccountGrantService(factory.begin)
     app = FastAPI()
     app.include_router(create_grant_router(service))
@@ -105,7 +111,7 @@ async def run_checks(factory, token):
         response = await api.post(root, json=body, headers=platform)
         assert response.status_code == 200 and not response.json()['changed'] and await count() == 1
         response = await api.get(root+'?tenant_id=101', headers=admin)
-        assert len(response.json()) == 1 and response.json()[0]['advisor_grant_id'] == 10
+        assert len(response.json()) == 2 and response.json()[0]['advisor_grant_id'] == 10
         ctx = AuthContext(1, '', '合成顾问', 101, advisor_scope=__import__(
             'app.security.advisor_scope', fromlist=['AdvisorScope']).AdvisorScope(frozenset({101}),101,10),
             auth_exp=4102444800)

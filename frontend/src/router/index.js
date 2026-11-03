@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError } from './chunkRecovery'
 import { session } from '../store/session'
 import { loginUrl } from '../auth/loginRedirect'
+import { shadowRoutes } from './shadowRoutes'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -12,6 +13,7 @@ const GrowthSniperLanding = () => import('../views/landing/GrowthSniperLanding.v
 const DiagnosisLanding = () => import('../views/landing/DiagnosisLanding.vue')
 
 const routes = [
+  ...shadowRoutes,
   {
     path: '/',
     redirect: '/monitor/dashboard',

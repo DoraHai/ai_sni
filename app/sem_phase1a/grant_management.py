@@ -147,6 +147,29 @@ class AccountGrantService:
                     return {'changed': False, 'grant': None}
                 if row['revoked_at'] is not None:
                     return {'changed': False, 'grant': self._view(row)}
+                # _account holds the account row lock (SQLite: BEGIN IMMEDIATE).
+                # Check before changing either the binding or its audit trail.
+                remaining = (await db.execute(text(
+                    'SELECT user_id,advisor_grant_id FROM sem_phase1a_account_grants '
+                    'WHERE tenant_id=:tid AND account_id=:aid AND revoked_at IS NULL '
+                    'AND user_id<>:uid ORDER BY user_id'),
+                    {'tid': tenant_id, 'aid': account_id, 'uid': user_id})).mappings().all()
+                if not remaining:
+                    raise GrantError('LAST_GRANT_PROTECTED', 409)
+                from app.security.advisor_scope import is_advisor
+                writable = False
+                for candidate in remaining:
+                    try:
+                        _, role = await self._user(db, candidate['user_id'])
+                        if not is_advisor(role):
+                            continue
+                        await self._target(db, candidate['user_id'], tenant_id, candidate['advisor_grant_id'])
+                        writable = True
+                        break
+                    except GrantError:
+                        continue
+                if not writable:
+                    raise GrantError('LAST_WRITABLE_ADVISOR_PROTECTED', 409)
             elif row is not None and row['revoked_at'] is None and row['advisor_grant_id'] == advisor_grant_id:
                 return {'changed': False, 'grant': self._view(row)}
             now = datetime.now(timezone.utc)

@@ -23,6 +23,16 @@ def digest(value):
 
 
 class ShadowService:
+    def list_plans(self, principal, tenant, account, offset=0, limit=50):
+        check_scope(principal, tenant, account, write=False)
+        states = self.store.list_plans(tenant, account, offset, limit)
+        # Metadata only. Detail/Excel still revalidate all source bytes and hashes.
+        return [{'plan_id': s['plan_id'], 'version': s['version'],
+                 'pages': [{'page_id': e['payload']['landing_page_id'], 'revision': e['revision']}
+                           for e in s['submissions']],
+                 'product_line_id': s['submission']['product_line_id'],
+                 'validation': 'detail_required', 'execution_enabled': False} for s in states]
+
     def __init__(self, submissions: SubmissionRepository, store: ShadowStore | None = None,
                  *, clock=time.time, preview_ttl=3600, submitted_only=False):
         self.submissions = submissions

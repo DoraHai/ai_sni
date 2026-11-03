@@ -26,6 +26,7 @@ class Transaction(Protocol):
 
 
 class ShadowStore(Protocol):
+    def list_plans(self, tenant: int, account: int, offset: int, limit: int) -> list[dict]: ...
     def transaction(self) -> ContextManager[Transaction]: ...
     def cleanup_previews(self, now: float) -> int: ...
 
@@ -71,6 +72,13 @@ class _Records:
 
 
 class SQLiteShadowStore:
+    def list_plans(self, tenant, account, offset, limit):
+        with closing(self._connect()) as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM shadow_plans WHERE json_extract(payload,'$.submission.tenant_id')=? "
+                "AND json_extract(payload,'$.submission.account_id')=? ORDER BY id LIMIT ? OFFSET ?",
+                (tenant, account, limit, offset))]
+
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
