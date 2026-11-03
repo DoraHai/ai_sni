@@ -1,3 +1,41 @@
+# SEM阶段1a第五刀：生产来源持久化与正式影子入口
+
+仅task12/slice5，完整阶段1a仍未完成；不可执行、不可上线。本刀已在app/main.py注册来源、影子规划及账户授权管理15个后端端点。无前端入口、无新环境变量或配置开关、未部署。新授权表为空时包括两类管理员全部403；未登录401。下面第四/三/二刀内容为历史，以本节为当前口径。
+
+开发时间：status12步骤1起至本刀测试、提交、CI与OSS封存；不含人工审查、生产操作或影子观察。最终提交/PR/CI与测试数见外部PHASE1A_SLICE5_HANDOFF.md、status12.md。
+
+## 来源与附件
+
+`SubmissionRepository`为可替换接口；原`SubmissionStore(Path)`保留本机SQLite演练语义。新增`SQLAlchemySubmissionStore(connection_factory, attachments=None)`，无engine/URL/config/DDL/本地文件回退。生产`ProductionServices`只使用现有app.database的异步engine，通过run_sync把每次来源/影子操作（包括全部来源重核和规划/审计/预览提交）包在一个数据库事务中；不创建第二个生产engine。独立适配器亦可注入Engine.begin。提交锁账户以串行首次版本，再锁页面；expected_revision CAS，只追加新版本，产品线/URL/page身份不变。读取重核完整契约、租户/账户/page/revision、规范JSON SHA-256、页面身份、附件清单SHA-256及已配置后端的每个附件字节hash；阶段1a仍重核来源hash并拒绝任一更新来源版本。
+
+仅新增`0079_sem_phase0_sources`接原唯一head0078：`sem_phase0_pages`、`sem_phase0_submissions`、`sem_phase0_attachments`。页面(account_id,tenant_id)复合FK引用账户；版本复合FK引用页面，附件复合FK引用版本，不能跨租户/账户/页面。三表有UPDATE/DELETE拒绝触发器，保留证据；版本/附件序号CHECK及PK/唯一索引。PG复用0078账户复合唯一索引，SQLite仅新增等价索引。旧迁移不变、downgrade拒绝、无GRANT或sem_runtime权限扩张。只在本机临时空库及现有CI临时PG随机schema验证，无生产迁移。
+
+仓库未发现已有私有对象存储抽象或配置，因此提供显式`PrivateAttachmentStore.put_if_absent/read`接口，生产装配默认None；附件上传返回固定503/ATTACHMENT_STORAGE_UNAVAILABLE，不写本地磁盘充当生产附件后端。二进制仅PNG/JPEG/WebP魔数白名单，10MiB/个、30MiB/页、10个，跨页拒绝，记录原字节SHA-256、大小、MIME及signature_only_untrusted；不解码、解析执行或OCR，魔数不代表图片语义安全。私有不可变对象key按tenant/account/page/revision/ordinal/hash限定，不使用上传文件名，不向API返回key/原字节/原异常。提交时先私有写入并回读hash再写版本/附件元数据；后端失败数据库回滚。对象存储与PG无分布式事务，DB失败可留不可达孤儿对象，禁止本刀自动删除；上线前另定留存/孤儿清理策略。读取带附件的版本在后端不可用时同样关闭，不悄悄忽略附件。
+
+## 正式入口与可见性
+
+管理面鉴权例外（task12/review17）：账户授权三个端点有意使用真实require_admin→require_auth，再由AccountGrantService在事务内重核DB管理员、账户租户、SEM模块与生产初始化门禁；不走账户绑定ProductionPrincipalAdapter。平台管理员无需拥有顾问/客户账户绑定，不能把管理权限变成来源/影子访问权。来源/影子全部继续使用生产principal。真实main回归检查三个管理路由的依赖图、两类无个人账户绑定管理员仅管理端点200、DB角色变更三个管理端点403且绑定/审计不变。不能为字面对齐而给全局管理员强加顾问账户principal。
+
+`app/main.py`仅装配三组router，保留enforce_production_secrets。来源与影子路由走真实require_auth→ProductionPrincipalAdapter→DB当前角色/tenant grant代次/模块/精确账户绑定，每请求重查，客户只读JSON/来源/到期建议；内部Excel GET会写审计，仍需顾问写权限。管理走真实require_admin→AccountGrantService事务内DB管理员角色重核，非可归属用户的API Key超管拒绝。顾问门禁`advisor_request`仅增加精确方法/路径列表，未列路径及其他既有写路由保持关闭；来源multipart身份/账户在服务层再核。不改共享JWT机制、百度同步/OAuth或前端。
+
+生产管理装配要求该账户已有至少一个未撤销精确绑定，否则GRANT_ACCOUNT_NOT_INITIALIZED/403，包括首次授权。此策略使空新表对所有人403；首次账户初始化、最后一个绑定撤销后的恢复，仅能通过另行批准的数据库/运维初始化脚本写入首条绑定，不能靠超管POST或其他HTTP端点自行开门。上线前须在staging演练空账户拒绝、批准脚本初始化、HTTP管理、最后绑定撤销后拒绝及批准脚本恢复，核对租户/账户归属、用户角色、顾问grant代次、最小权限和审计；本刀不提供或执行初始化脚本、不连接staging/生产。本刀没有初始化/回填任何授权数据。已有工厂未启用该生产约束的隔离单元回归仅测管理服务本身；slice5另在真实main.app验证无种子首绑和最后绑定撤销后的三个管理操作，两类管理员均固定403/GRANT_ACCOUNT_NOT_INITIALIZED，绑定与审计全表快照不变。管理list响应只投影user_id、tenant_id、account_id、advisor_grant_id、generation、revoked_at，不返回用户资料或输入原文。
+
+生产规划只使用持久化顾问提交的`product:/benefit:/keywords:`内容和明确预算/投放边界；缺项返回固定契约错误，不调用页面、OCR或模型，不使用合成HTML/假OCR或合成账户资料冒充线上来源。fixture_id在生产被忽略；合成演练适配保留原行为。尚无真实资产及账户预算帽核验，生产视图明确P5 existing_assets_unverified、P6 account_cap_unverified阻断；不能把声明预算当真实账户帽，演练逐项审批因此仍会拒绝。此刀不补真实同步。所有响应execution/go_live均false，正式客户确认pending，无新增execute/upload-to-baidu/enable/customer-confirm/auto-pause出口，内部XLSX仅演练。
+
+## 验证与上线前事项
+
+review17补充：独立测试进程仅在导入实际main.app时给ProductionServices注入实现PrivateAttachmentStore协议的纯内存测试后端，不替换真实auth/principal/服务，不改变生产默认None、不新增环境开关。HTTP上传201、GET200与原字节SHA-256相同、客户只读、跨租户/未绑定账户403且后端无新增访问、篡改422/SOURCE_INVALID、后端读失败503均有回归；该样例证明挂载组合成功路径，不代表实际云后端已装配或ACL/超时已验收。inventory固定为15端点数量哨兵，另有逐路由匹配及15×29端点矩阵；默认附件503、来源201使旧规划409和关闭路径均输出端点状态并显式断言。
+
+上线顺序检查（须另外批准执行）：先在目标PG同版本的临时小库演练0077→0078→0079及EXECUTE FUNCTION兼容性；批准0078脏绑定只读巡检、清理责任与复合唯一索引扫描/锁窗口后，按窗口安装0078并核实(id,tenant_id)唯一键，再安装依赖它的0079；确认schema与最小DB权限后，由批准的初始化/恢复SOP写首条绑定并核验角色、tenant、顾问代次、责任人和审计（无脚本/权限批准即停止上线）；显式装配并验证私有附件后端、备份/恢复及留存/孤儿治理；最后才允许切换本刀代码并做受保护API验收。不得先切代码再补迁移/种子/附件。当前仅Draft，这份清单不是生产执行授权。初始化/恢复脚本仍未提供，孤儿清理策略及隔离/备份恢复验收仍待另批，禁止自动删除或磁盘回退。未来新增管理方法/路径必须同步审advisor_request门禁、main_fixture路由清单和端点矩阵；list扩展继续显式字段白名单与审计检查。
+
+`tests/sem_phase1a_main_fixture.py`在独立进程导入实际main.app，真实JWT及生产装配、角色/账户/来源/规划表全部为临时合成数据，无require_auth/principal/服务替身、不进入lifespan、不启动调度器、不读.env/网络。仅让真实数据库factory采用适用SQLite的pool选项。`test_sem_phase1a_slice5.py`对15端点×29状态参数化435项：原26态加有效顾问、内置管理员、平台管理员的真实15维HTTP结果。顾问管理GET/两个POST固定403并验证无绑定/审计变化，顾问审批因生产资产/账户帽未核验仍为422/DUPLICATE_BLOCKED，不伪报审批成功；两类管理员仅三个管理端点200，实际撤销后重授。另有首绑/最后绑定撤销×两类管理员×三个端点12项参数回归，以及未绑定账户/即时撤销/来源更新失效/附件默认失败/真实OpenAPI清单与未列路径。独立进程在导入main前将start_scheduler设为调用即失败的spy，并断言零调用，ASGITransport不进入lifespan。保留phase0、1a、slice2/3/4及迁移完整回归。
+
+新增原生PG用例仅接受已有SEM_ALERT_TEST_DATABASE_URL的loopback/sem_writeback_test，在随机schema实际0077→0078→0079、跨scope FK/只追加拒绝、来源并发仅一次成功、重启/hash读取、附件写失败回滚/后端缺失失败、来源新版本使规划立即失效；无URL本地skip。现有CI完整pytest收集执行，最终必须从本提交日志核对SLICE5_NATIVE_PG_EXECUTED标记；本地SQLite不算PG通过，不改.github。
+
+挂入口后上线前仍要：另审生产0078脏绑定只读巡检/获批清理、账户复合索引扫描/锁窗口及0079新增表/索引/触发器安装窗口；按实际DB角色另审最小权限，本刀不扩sem_runtime；实现并显式装配私有附件后端（ACL/不可变写/限额/超时/回读/保留期/备份/孤儿治理），不得新增临时磁盘回退；另行批准首次账户授权初始化/恢复SOP；另审前端入口和真实顾问使用路径、预算帽/资产核验及来源格式提示。本刀无前端入口，API被授权后可通过客户端调用；OpenAPI存在新接口不代表顾问界面已上线。0078审计单列账户FK的既有残余风险继续按仅管理服务写审计SOP，不新增第二审计写入口。未来运行影子观察/上线须另批。
+
+---
+
 # SEM阶段1a第四刀续做（task11b）：未挂载的账户授权管理
 
 **演练复核完成，不可执行、不可上线。** 仅task11b允许的范围A与账户授权管理。未修改`app/main.py`、共享鉴权、百度同步/OAuth或`.github`，未新增环境/配置开关。路由仅在测试显式注入的FastAPI app内挂载，未接生产入口，完整阶段1a未完成。以下第四刀说明为当前口径，后面的第三/二刀内容保留为历史。

@@ -1,4 +1,4 @@
-"""仅本地持久化合成演练服务；显式phase0存储与可信权限注入，无配置/环境/生产库依赖。"""
+"""可注入来源/规划存储的影子演练服务；真实来源只用顾问提交内容，执行保持关闭。"""
 from __future__ import annotations
 
 import copy
@@ -9,7 +9,7 @@ import time
 from uuid import uuid4
 
 from app.sem_phase0.contracts import LandingSubmission
-from app.sem_phase0.store import RevisionConflict, SubmissionStore, check_scope
+from app.sem_phase0.store import RevisionConflict, SubmissionRepository, check_scope
 from app.sem_phase1a.contracts import PlanRow, WARNING
 from app.sem_phase1a.planning import checks, duplicates, expiry_suggestions, generate_bundle
 from app.sem_phase1a.store import SQLiteShadowStore, ShadowStore
@@ -23,15 +23,17 @@ def digest(value):
 
 
 class ShadowService:
-    def __init__(self, submissions: SubmissionStore, store: ShadowStore | None = None,
-                 *, clock=time.time, preview_ttl=3600):
+    def __init__(self, submissions: SubmissionRepository, store: ShadowStore | None = None,
+                 *, clock=time.time, preview_ttl=3600, submitted_only=False):
         self.submissions = submissions
         self.store = store if store is not None else SQLiteShadowStore(
             submissions.path.with_name(submissions.path.stem + ".shadow.sqlite3"))
         if preview_ttl <= 0:
             raise ValueError("预览TTL必须为正")
         self.clock, self.preview_ttl = clock, preview_ttl
-        self._fixtures = json.loads((FIXTURES / "existing.internal.json").read_text(encoding="utf-8"))
+        self.submitted_only = submitted_only
+        self._fixtures = ({"accounts": []} if submitted_only else
+                          json.loads((FIXTURES / "existing.internal.json").read_text(encoding="utf-8")))
 
     def _audit(self, state, principal, action, details):
         event = {"ordinal": len(state["audit"])+1, "actor": principal.actor_id,
@@ -76,7 +78,7 @@ class ShadowService:
         check_scope(principal, request.tenant_id, request.account_id)
         account = next((a for a in self._fixtures["accounts"]
                         if (a["tenant_id"], a["account_id"]) == (request.tenant_id, request.account_id)), None)
-        if account is None:
+        if account is None and not self.submitted_only:
             raise ShadowError("SYNTHETIC_ACCOUNT_REQUIRED", "本刀仅允许已声明的合成账户夹具")
         entries, sources = [], []
         for index, page in enumerate(pages, 1):
@@ -88,13 +90,16 @@ class ShadowService:
             if digest(submission["payload"]) != submission["payload_sha256"]:
                 raise ShadowError("SOURCE_INVALID", "阶段0来源hash不一致")
             prefix = f"p{index}:" if len(pages) > 1 else ""
-            collected = collect(payload, page.submission_revision, submission["payload_sha256"], page.fixture_id)
+            collected = collect(payload, page.submission_revision, submission["payload_sha256"], page.fixture_id,
+                                submitted_only=self.submitted_only)
             sources.extend([source.model_copy(update={"source_id": f"p{index}-{source.source_id}",
                             "field": prefix + source.field}) if prefix else source for source in collected])
             entries.append({"payload": submission["payload"], "revision": page.submission_revision,
                             "sha256": submission["payload_sha256"], "prefix": prefix})
         if len({(e["payload"]["budget_period"], e["payload"]["currency"]) for e in entries}) != 1:
             raise ShadowError("BUDGET_INVALID", "多页预算周期/币种必须一致")
+        if self.submitted_only:
+            account = {"assets": [], "budget_cap_cents": sum(e["payload"]["budget_cents"] for e in entries)}
         self.cleanup_previews()
         with self.store.transaction() as tx:
             state = {"plan_id": uuid4().hex, "version": 1, "submission": entries[0]["payload"],
@@ -102,7 +107,8 @@ class ShadowService:
                      "submission_sha256": entries[0]["sha256"] if len(entries) == 1 else digest(entries),
                      "sources": [source.model_dump() for source in sources], "comparisons": comparisons(sources),
                      "selected": {}, "rows": [], "approvals": {}, "audit": [], "history": [],
-                     "rulings": [], "synthetic": True, "backend": "fixture", "generator": "deterministic_rules",
+                     "rulings": [], "synthetic": not self.submitted_only,
+                     "backend": "submitted_only" if self.submitted_only else "fixture", "generator": "deterministic_rules",
                      "warning": WARNING, "mode": "rehearsal", "customer_confirmation": "pending",
                      "execution_export_enabled": False, "enable_allowed": False,
                      "existing_assets": copy.deepcopy(account["assets"]), "budget_cap_cents": account["budget_cap_cents"]}
@@ -133,6 +139,12 @@ class ShadowService:
             result["p6"] = {"passed": False, "issues": [{"rule": "unresolved_sources", "blocking": True}]}
             result["advisor_review_complete"] = False
             result["plan_sha256"] = None
+        if state.get("backend") == "submitted_only":
+            result["p5"]["scope"] = "batch_only_existing_assets_unverified"
+            result["p5"]["passed"] = False
+            result["p5"]["issues"].append({"rule": "existing_assets_unverified", "blocking": True})
+            result["p6"]["passed"] = False
+            result["p6"]["issues"].append({"rule": "account_cap_unverified", "blocking": True})
         result["state"] = "shadow_review" if rows else "awaiting_ruling"
         # Delivery flags are immutable constants, even if a local snapshot was modified.
         result.update(mode="rehearsal", customer_confirmation="pending",

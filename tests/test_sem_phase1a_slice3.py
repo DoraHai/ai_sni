@@ -210,7 +210,8 @@ def test_unique_migration_head_and_empty_local_upgrade(tmp_path):
     # minimal pre-existing application tables; never load migrations/env.py.
     cfg = Config(); cfg.set_main_option('script_location', 'migrations')
     scripts = ScriptDirectory.from_config(cfg)
-    assert scripts.get_heads() == ['0078_sem_phase1a_grants']
+    assert scripts.get_heads() == ['0079_sem_phase0_sources']
+    assert scripts.get_revision('0079_sem_phase0_sources').down_revision == '0078_sem_phase1a_grants'
     assert scripts.get_revision('0078_sem_phase1a_grants').down_revision == '0077_sem_phase1a_shadow'
     assert scripts.get_revision('0077_sem_phase1a_shadow').down_revision == '0076_oauth_rebind_intent'
     engine = create_engine('sqlite:///' + str(tmp_path / 'migration.sqlite'))
@@ -222,6 +223,7 @@ def test_unique_migration_head_and_empty_local_upgrade(tmp_path):
         migrate(db)
         with Operations.context(MigrationContext.configure(db)):
             scripts.get_revision('0078_sem_phase1a_grants').module.upgrade()
+            scripts.get_revision('0079_sem_phase0_sources').module.upgrade()
         schema = inspect(db)
         names = {name for name in schema.get_table_names() if name.startswith('sem_phase1a_')}
         assert names == {'sem_phase1a_account_grants', 'sem_phase1a_shadow_plans',

@@ -28,6 +28,15 @@ SEM_READ_ROUTES = re.compile(
 )
 
 
+# Exact inert source/shadow routes. Future routes and management stay denied.
+SEM_SHADOW_READ = re.compile(
+    r'/api/v1/sem/(?:phase1a/shadow/plans/[\w-]+(?:/excel/(?:advisor|customer)|/expiry-suggestions)?'
+    r'|phase0/submissions/[0-9]+/[0-9]+/[\w-]+/[0-9]+)')
+SEM_SHADOW_WRITE = re.compile(
+    r'/api/v1/sem/(?:phase1a/shadow/plans(?:/batch|/[\w-]+/(?:structure|rulings|'
+    r'previews/(?:advisor|customer)|apply-preview|approvals))?|phase0/submissions)')
+
+
 def tenant_values(value):
     if isinstance(value, dict):
         for key, item in value.items():
@@ -70,6 +79,12 @@ async def guard_advisor_request(session, ctx, request, payload):
             pass
     for value in values:
         scope.ensure_tenant(positive_id(value))
+    if ((method == 'GET' and SEM_SHADOW_READ.fullmatch(path))
+            or (method == 'POST' and SEM_SHADOW_WRITE.fullmatch(path))):
+        # The handlers still require ProductionPrincipalAdapter after require_auth:
+        # current DB role, grant generation, module and explicit account binding.
+        await ensure_module_access(session, ctx, scope.tenant_id, 'sem')
+        return
     if method not in ("GET", "HEAD"):
         # No new task columns or unreviewed final-side-effect serialization.
         # The separate high-risk flag is deliberately insufficient to enable

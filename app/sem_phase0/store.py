@@ -8,6 +8,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol
 
 from app.sem_phase0.contracts import LandingSubmission
 from app.sem_phase0.screenshots import MAX_IMAGES, MAX_TOTAL_BYTES, Screenshot, clean_screenshot
@@ -19,6 +20,20 @@ class ScopeDenied(Exception):
 
 class RevisionConflict(Exception):
     pass
+
+
+class StorageUnavailable(Exception):
+    """Fixed public error; never includes backend details."""
+    code = "SOURCE_STORAGE_UNAVAILABLE"
+
+
+class AttachmentUnavailable(StorageUnavailable):
+    code = "ATTACHMENT_STORAGE_UNAVAILABLE"
+
+
+class SubmissionRepository(Protocol):
+    def submit(self, principal, payload, screenshots) -> dict: ...
+    def read(self, principal, tenant, account, page, revision) -> dict | None: ...
 
 
 @dataclass(frozen=True)

@@ -20,7 +20,7 @@ class SQLAlchemyShadowStore:
     @contextmanager
     def transaction(self):
         with self.connection_factory() as db:
-            if db.dialect.name == 'sqlite':
+            if db.dialect.name == 'sqlite' and not db.info.get('sem_source_bound'):
                 db.exec_driver_sql('BEGIN IMMEDIATE')
             tx = _Transaction(db)
             yield tx
@@ -38,7 +38,8 @@ class SQLAlchemyShadowStore:
                     'DELETE FROM sem_phase1a_shadow_previews p USING expired e WHERE p.id=e.id'),
                     {'now': now}).rowcount
             # SQLite has one writer. Acquire its write lock before selecting/deleting.
-            db.exec_driver_sql('BEGIN IMMEDIATE')
+            if not db.info.get('sem_source_bound'):
+                db.exec_driver_sql('BEGIN IMMEDIATE')
             return db.execute(text('DELETE FROM sem_phase1a_shadow_previews WHERE expires_at<=:now'),
                               {'now': now}).rowcount
 
