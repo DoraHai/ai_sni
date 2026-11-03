@@ -5,32 +5,57 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
+from fastapi.routing import APIRoute
+from fastapi.exceptions import RequestValidationError
+from app.sem_phase1a.errors import ShadowError
 from starlette.concurrency import run_in_threadpool
 
 from app.sem_phase0.store import AdvisorPrincipal, RevisionConflict, ScopeDenied
-from app.sem_phase1a.contracts import ApplyRequest, ApprovalRequest, CreateRequest, RulingRequest
+from app.sem_phase1a.contracts import ApplyRequest, ApprovalRequest, CreateRequest, RulingRequest, BatchCreateRequest, StructureRequest
 from app.sem_phase1a.excel import MAX_XLSX_BYTES
 from app.sem_phase1a.service import ShadowService
 
 
+class _SafeRoute(APIRoute):
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def handler(request):
+            try:
+                return await original(request)
+            except RequestValidationError:
+                raise HTTPException(422, {"code": "CONTRACT_INVALID", "message": "请求不满足演练契约"}) from None
+        return handler
+
+
 def create_router(service: ShadowService, resolve_principal):
-    router = APIRouter(prefix="/api/v1/sem/phase1a/shadow", tags=["SEM合成影子演练"])
+    router = APIRouter(prefix="/api/v1/sem/phase1a/shadow", tags=["SEM合成影子演练"], route_class=_SafeRoute)
 
     def invoke(function, *args):
         try:
             return function(*args)
         except ScopeDenied:
-            raise HTTPException(403, "无该合成账户的顾问权限") from None
+            raise HTTPException(403, {"code": "SCOPE_DENIED", "message": "无该合成账户的权限"}) from None
         except RevisionConflict:
-            raise HTTPException(409, "来源/规划/预览版本已失效，请重新读取或创建") from None
+            raise HTTPException(409, {"code": "VERSION_CONFLICT", "message": "来源/规划/预览版本已失效"}) from None
         except KeyError:
-            raise HTTPException(404, "合成演练记录不存在") from None
+            raise HTTPException(404, {"code": "NOT_FOUND", "message": "合成演练记录不存在"}) from None
+        except ShadowError as exc:
+            raise HTTPException(422, {"code": exc.code, "message": "演练检查未通过，请按错误码修订"}) from None
         except (ValueError, PermissionError):
-            raise HTTPException(422, "演练契约/检查不满足；请核对版本、来源、格式及硬阻断") from None
+            raise HTTPException(422, {"code": "CONTRACT_INVALID", "message": "演练契约或检查不满足"}) from None
 
     @router.post("/plans", status_code=201)
     def create(body: CreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
         return invoke(service.create, principal, body)
+
+    @router.post("/plans/batch", status_code=201)
+    def create_batch(body: BatchCreateRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return invoke(service.create, principal, body)
+
+    @router.post("/plans/{plan_id}/structure")
+    def structure(plan_id: str, body: StructureRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
+        return invoke(service.edit_structure, principal, plan_id, body)
 
     @router.get("/plans/{plan_id}")
     def read(plan_id: str, principal: AdvisorPrincipal = Depends(resolve_principal)):
@@ -51,9 +76,11 @@ def create_router(service: ShadowService, resolve_principal):
                       principal: AdvisorPrincipal = Depends(resolve_principal)):
         try:
             if not (file.filename or "").lower().endswith(".xlsx"):
-                raise HTTPException(422, "仅接受本模块内部XLSX")
+                raise HTTPException(422, {"code": "EXCEL_INVALID_OR_TAMPERED", "message": "仅接受内部XLSX"})
             # 在读附件前完成账户权限检查。
-            invoke(service.read, principal, plan_id)
+            view = invoke(service.read, principal, plan_id)
+            from app.sem_phase0.store import check_scope
+            invoke(check_scope, principal, view["submission"]["tenant_id"], view["submission"]["account_id"])
             data = await file.read(MAX_XLSX_BYTES+1)
             return await run_in_threadpool(invoke, service.preview, principal, plan_id, data, audience)
         finally:

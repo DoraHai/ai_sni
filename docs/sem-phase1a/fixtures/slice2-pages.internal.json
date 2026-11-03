@@ -1,0 +1,131 @@
+{
+  "synthetic": true,
+  "pages": [
+    {
+      "tenant_id": 101,
+      "account_id": 201,
+      "product_line_id": "line-a",
+      "landing_page_id": "slice2-page-1",
+      "expected_revision": 0,
+      "case_type": "event",
+      "account_ready": true,
+      "landing_url": "https://example.invalid/slice2-1",
+      "page_content": "product: 合成甲产品\nbenefit: 合成甲优势\nkeywords: 合成甲关键词",
+      "goal": "合成咨询",
+      "budget_cents": 1000,
+      "budget_period": "daily",
+      "currency": "CNY",
+      "bid_cap_cents": 200,
+      "regions": [
+        "合成地域"
+      ],
+      "timezone": "Asia/Shanghai",
+      "schedule": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start_hour": 9,
+          "end_hour": 18
+        }
+      ],
+      "brand_rules": "仅使用合成星河品牌",
+      "negative_keywords": [
+        "合成甲禁词"
+      ],
+      "starts_at": "2026-11-01T09:00:00+08:00",
+      "ends_at": "2026-11-08T18:00:00+08:00",
+      "no_deadline_explicit": false,
+      "link_source": "group",
+      "authorized_scope": "仅合成本地演练"
+    },
+    {
+      "tenant_id": 101,
+      "account_id": 201,
+      "product_line_id": "line-a",
+      "landing_page_id": "slice2-page-2",
+      "expected_revision": 0,
+      "case_type": "event",
+      "account_ready": true,
+      "landing_url": "https://example.invalid/slice2-2",
+      "page_content": "product: 合成乙产品\nbenefit: 合成乙优势\nkeywords: 合成乙关键词",
+      "goal": "合成咨询",
+      "budget_cents": 2000,
+      "budget_period": "daily",
+      "currency": "CNY",
+      "bid_cap_cents": 200,
+      "regions": [
+        "合成地域"
+      ],
+      "timezone": "Asia/Shanghai",
+      "schedule": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start_hour": 9,
+          "end_hour": 18
+        }
+      ],
+      "brand_rules": "仅使用合成星河品牌",
+      "negative_keywords": [
+        "合成乙禁词"
+      ],
+      "starts_at": "2026-11-01T09:00:00+08:00",
+      "ends_at": "2026-11-08T18:00:00+08:00",
+      "no_deadline_explicit": false,
+      "link_source": "group",
+      "authorized_scope": "仅合成本地演练"
+    },
+    {
+      "tenant_id": 101,
+      "account_id": 201,
+      "product_line_id": "line-b",
+      "landing_page_id": "slice2-page-3",
+      "expected_revision": 0,
+      "case_type": "event",
+      "account_ready": true,
+      "landing_url": "https://example.invalid/slice2-3",
+      "page_content": "product: 合成丙产品\nbenefit: 合成丙优势\nkeywords: 合成丙关键词",
+      "goal": "合成咨询",
+      "budget_cents": 3000,
+      "budget_period": "daily",
+      "currency": "CNY",
+      "bid_cap_cents": 200,
+      "regions": [
+        "合成地域"
+      ],
+      "timezone": "Asia/Shanghai",
+      "schedule": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start_hour": 9,
+          "end_hour": 18
+        }
+      ],
+      "brand_rules": "仅使用合成星河品牌",
+      "negative_keywords": [
+        "合成丙禁词"
+      ],
+      "starts_at": "2026-11-01T09:00:00+08:00",
+      "ends_at": "2026-11-08T18:00:00+08:00",
+      "no_deadline_explicit": false,
+      "link_source": "group",
+      "authorized_scope": "仅合成本地演练"
+    }
+  ]
+}

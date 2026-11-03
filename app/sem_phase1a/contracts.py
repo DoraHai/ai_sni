@@ -49,7 +49,7 @@ class CreateRequest(Contract):
 class RulingRequest(Contract):
     expected_version: int = Field(strict=True, gt=0)
     # 未列字段采用识别值优先的默认选择，仍必须由顾问明确提交本次裁定。
-    choices: dict[str, str] = Field(default_factory=dict, max_length=50)
+    choices: dict[str, str] = Field(default_factory=dict, max_length=500)
     reason: Text
 
 
@@ -62,3 +62,36 @@ class ApprovalRequest(Contract):
 class ApplyRequest(Contract):
     expected_version: int = Field(strict=True, gt=0)
     preview_id: Id
+
+
+class PageReference(Contract):
+    page_id: Id
+    submission_revision: int = Field(strict=True, gt=0)
+    fixture_id: Literal["launch", "fallback", "empty"] = "launch"
+
+
+class BatchCreateRequest(Contract):
+    tenant_id: int = Field(strict=True, gt=0)
+    account_id: int = Field(strict=True, gt=0)
+    pages: list[PageReference] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def distinct_pages(self):
+        if len({p.page_id for p in self.pages}) != len(self.pages):
+            raise ValueError("每个落地页只能引用一次")
+        return self
+
+
+class StructureOperation(Contract):
+    action: Literal["add_campaign", "add_unit", "update", "delete", "move_keyword"]
+    row_id: Id | None = None
+    parent_id: Id | None = None
+    text: Text | None = None
+    budget_cents: int | None = Field(default=None, strict=True, gt=0)
+    source_refs: list[Id] | None = Field(default=None, min_length=1, max_length=100)
+
+
+class StructureRequest(Contract):
+    expected_version: int = Field(strict=True, gt=0)
+    reason: Text
+    operations: list[StructureOperation] = Field(min_length=1, max_length=100)

@@ -105,8 +105,10 @@ def collect(payload: LandingSubmission, revision: int, submission_hash: str,
 
 def comparisons(sources):
     results = []
-    for field in dict.fromkeys(s.field for s in sources):
-        candidates = [s for s in sources if s.field == field]
+    priority = {"fixture_html": 0, "fixture_ocr": 1, "submission": 2}
+    for field in sorted({s.field for s in sources}):
+        candidates = sorted((s for s in sources if s.field == field),
+                            key=lambda s: (priority[s.origin], s.source_id))
         # 识别值优先；HTML和假OCR都有值时，按固定HTML优先展示，顾问仍可改判。
         results.append({"field": field, "default_source_id": candidates[0].source_id,
                         "conflict": len({s.value for s in candidates}) > 1,

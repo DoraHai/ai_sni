@@ -1,17 +1,19 @@
-"""仅进程内合成演练服务；显式phase0存储与可信权限注入，无配置/环境/生产库依赖。"""
+"""仅本地持久化合成演练服务；显式phase0存储与可信权限注入，无配置/环境/生产库依赖。"""
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
 from datetime import datetime, timezone
-from threading import RLock
+import time
 from uuid import uuid4
 
 from app.sem_phase0.contracts import LandingSubmission
 from app.sem_phase0.store import RevisionConflict, SubmissionStore, check_scope
 from app.sem_phase1a.contracts import PlanRow, WARNING
-from app.sem_phase1a.planning import checks, duplicates, expiry_suggestions, generate
+from app.sem_phase1a.planning import checks, duplicates, expiry_suggestions, generate_bundle
+from app.sem_phase1a.store import SQLiteShadowStore, ShadowStore
+from app.sem_phase1a.errors import ShadowError
 from app.sem_phase1a.sources import FIXTURES, collect, comparisons
 
 
@@ -21,11 +23,14 @@ def digest(value):
 
 
 class ShadowService:
-    def __init__(self, submissions: SubmissionStore):
+    def __init__(self, submissions: SubmissionStore, store: ShadowStore | None = None,
+                 *, clock=time.time, preview_ttl=3600):
         self.submissions = submissions
-        self._plans = {}
-        self._previews = {}
-        self._lock = RLock()
+        self.store = store if store is not None else SQLiteShadowStore(
+            submissions.path.with_name(submissions.path.stem + ".shadow.sqlite3"))
+        if preview_ttl <= 0:
+            raise ValueError("预览TTL必须为正")
+        self.clock, self.preview_ttl = clock, preview_ttl
         self._fixtures = json.loads((FIXTURES / "existing.internal.json").read_text(encoding="utf-8"))
 
     def _audit(self, state, principal, action, details):
@@ -35,53 +40,82 @@ class ShadowService:
                  "previous_sha256": state["audit"][-1]["sha256"] if state["audit"] else None}
         state["audit"].append({**event, "sha256": digest(event)})
 
-    def _state(self, principal, plan_id, expected=None):
-        state = self._plans.get(plan_id)
+    def _state(self, tx, principal, plan_id, expected=None, *, write=True):
+        state = tx.plans.get(plan_id)
         if state is None:
             raise KeyError("无该演练规划")
         payload = LandingSubmission.model_validate(state["submission"])
-        check_scope(principal, payload.tenant_id, payload.account_id)
+        check_scope(principal, payload.tenant_id, payload.account_id, write=write)
         if expected is not None and state["version"] != expected:
             raise RevisionConflict("演练版本过期，请重新读取")
-        if self.submissions.read(principal, payload.tenant_id, payload.account_id,
-                                 payload.landing_page_id, state["submission_revision"] + 1):
-            raise RevisionConflict("阶段0已有新来源版本，请重新创建演练规划，旧批准失效")
+        for entry in state["submissions"]:
+            item = LandingSubmission.model_validate(entry["payload"])
+            if (item.tenant_id, item.account_id) != (payload.tenant_id, payload.account_id):
+                raise ShadowError("SOURCE_INVALID", "来源账户校验失败")
+            if digest(entry["payload"]) != entry["sha256"]:
+                raise ShadowError("SOURCE_INVALID", "来源hash校验失败")
+            current = self.submissions.read(principal, item.tenant_id, item.account_id,
+                                            item.landing_page_id, entry["revision"])
+            if current is None or current["payload_sha256"] != entry["sha256"]:
+                raise RevisionConflict("阶段0来源已变更")
+            if self.submissions.read(principal, item.tenant_id, item.account_id,
+                                     item.landing_page_id, entry["revision"] + 1):
+                raise RevisionConflict("阶段0已有新来源版本，请重新创建演练规划，旧批准失效")
         return state
 
     def create(self, principal, request):
-        from app.sem_phase1a.contracts import CreateRequest
+        from app.sem_phase1a.contracts import BatchCreateRequest, CreateRequest, PageReference
 
-        request = CreateRequest.model_validate(request.model_dump())
+        if isinstance(request, BatchCreateRequest):
+            request = BatchCreateRequest.model_validate(request.model_dump())
+            pages = request.pages
+        else:
+            request = CreateRequest.model_validate(request.model_dump())
+            pages = [PageReference(page_id=request.page_id, submission_revision=request.submission_revision,
+                                   fixture_id=request.fixture_id)]
         check_scope(principal, request.tenant_id, request.account_id)
-        submission = self.submissions.read(principal, request.tenant_id, request.account_id,
-                                           request.page_id, request.submission_revision)
-        if submission is None:
-            raise KeyError("阶段0提交不存在")
-        payload = LandingSubmission.model_validate(submission["payload"])
-        if digest(submission["payload"]) != submission["payload_sha256"]:
-            raise ValueError("阶段0来源hash不一致")
         account = next((a for a in self._fixtures["accounts"]
                         if (a["tenant_id"], a["account_id"]) == (request.tenant_id, request.account_id)), None)
         if account is None:
-            raise ValueError("本刀仅允许已声明的合成账户夹具")
-        sources = collect(payload, request.submission_revision, submission["payload_sha256"], request.fixture_id)
-        with self._lock:
-            state = {"plan_id": uuid4().hex, "version": 1, "submission": submission["payload"],
-                     "submission_revision": request.submission_revision,
-                     "submission_sha256": submission["payload_sha256"],
-                     "sources": [s.model_dump() for s in sources], "comparisons": comparisons(sources),
+            raise ShadowError("SYNTHETIC_ACCOUNT_REQUIRED", "本刀仅允许已声明的合成账户夹具")
+        entries, sources = [], []
+        for index, page in enumerate(pages, 1):
+            submission = self.submissions.read(principal, request.tenant_id, request.account_id,
+                                               page.page_id, page.submission_revision)
+            if submission is None:
+                raise KeyError("阶段0提交不存在")
+            payload = LandingSubmission.model_validate(submission["payload"])
+            if digest(submission["payload"]) != submission["payload_sha256"]:
+                raise ShadowError("SOURCE_INVALID", "阶段0来源hash不一致")
+            prefix = f"p{index}:" if len(pages) > 1 else ""
+            collected = collect(payload, page.submission_revision, submission["payload_sha256"], page.fixture_id)
+            sources.extend([source.model_copy(update={"source_id": f"p{index}-{source.source_id}",
+                            "field": prefix + source.field}) if prefix else source for source in collected])
+            entries.append({"payload": submission["payload"], "revision": page.submission_revision,
+                            "sha256": submission["payload_sha256"], "prefix": prefix})
+        if len({(e["payload"]["budget_period"], e["payload"]["currency"]) for e in entries}) != 1:
+            raise ShadowError("BUDGET_INVALID", "多页预算周期/币种必须一致")
+        self.cleanup_previews()
+        with self.store.transaction() as tx:
+            state = {"plan_id": uuid4().hex, "version": 1, "submission": entries[0]["payload"],
+                     "submission_revision": entries[0]["revision"], "submissions": entries,
+                     "submission_sha256": entries[0]["sha256"] if len(entries) == 1 else digest(entries),
+                     "sources": [source.model_dump() for source in sources], "comparisons": comparisons(sources),
                      "selected": {}, "rows": [], "approvals": {}, "audit": [], "history": [],
                      "rulings": [], "synthetic": True, "backend": "fixture", "generator": "deterministic_rules",
                      "warning": WARNING, "mode": "rehearsal", "customer_confirmation": "pending",
                      "execution_export_enabled": False, "enable_allowed": False,
                      "existing_assets": copy.deepcopy(account["assets"]), "budget_cap_cents": account["budget_cap_cents"]}
-            # 新创建也拒绝过期的阶段0版本。
-            if self.submissions.read(principal, request.tenant_id, request.account_id,
-                                     request.page_id, request.submission_revision+1):
-                raise RevisionConflict("阶段0版本过期")
+            for entry in entries:
+                if self.submissions.read(principal, request.tenant_id, request.account_id,
+                                         entry["payload"]["landing_page_id"], entry["revision"]+1):
+                    raise RevisionConflict("阶段0版本过期")
             self._audit(state, principal, "created", {"submission_sha256": state["submission_sha256"]})
-            self._plans[state["plan_id"]] = state
+            tx.plans[state["plan_id"]] = state
             return self._view(state)
+
+    def cleanup_previews(self):
+        return self.store.cleanup_previews(self.clock())
 
     def _view(self, state):
         result = copy.deepcopy(state)
@@ -90,7 +124,7 @@ class ShadowService:
             from app.sem_phase1a.contracts import Source
 
             result["p5"] = duplicates(rows, result["existing_assets"])
-            result["p6"] = checks(rows, [Source.model_validate(s) for s in result["sources"]], result["budget_cap_cents"])
+            result["p6"] = checks(rows, [Source.model_validate(s) for s in result["sources"]], result["budget_cap_cents"], result["selected"], result["rulings"])
             result["advisor_review_complete"] = all(r.row_id in result["approvals"] for r in rows)
             result["plan_sha256"] = digest({"version": result["version"], "rows": result["rows"],
                                              "selected": result["selected"], "submission_sha256": result["submission_sha256"]})
@@ -100,31 +134,42 @@ class ShadowService:
             result["advisor_review_complete"] = False
             result["plan_sha256"] = None
         result["state"] = "shadow_review" if rows else "awaiting_ruling"
+        # Delivery flags are immutable constants, even if a local snapshot was modified.
+        result.update(mode="rehearsal", customer_confirmation="pending",
+                      execution_export_enabled=False, enable_allowed=False)
         return result
 
     def read(self, principal, plan_id):
-        with self._lock:
-            return self._view(self._state(principal, plan_id))
+        with self.store.transaction() as tx:
+            return self._view(self._state(tx, principal, plan_id, write=False))
 
     def rule(self, principal, plan_id, request):
         from app.sem_phase1a.contracts import RulingRequest, Source
 
         request = RulingRequest.model_validate(request.model_dump())
-        with self._lock:
-            state = self._state(principal, plan_id, request.expected_version)
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id, request.expected_version)
             selected = {c["field"]: c["default_source_id"] for c in state["comparisons"]}
             by_id = {s["source_id"]: s for s in state["sources"]}
             for field, source_id in request.choices.items():
                 if field not in selected or source_id not in by_id or by_id[source_id]["field"] != field:
                     raise ValueError("裁定只能选择该字段的已记录来源")
                 selected[field] = source_id
-            rows = [r.model_dump() for r in generate(LandingSubmission.model_validate(state["submission"]),
-                    [Source.model_validate(s) for s in state["sources"]], selected)]
+            rows = [r.model_dump() for r in generate_bundle(
+                [(LandingSubmission.model_validate(e["payload"]), e["prefix"]) for e in state["submissions"]],
+                [Source.model_validate(source) for source in state["sources"]], selected)]
+            if len(rows) > 1000:
+                raise ShadowError("STRUCTURE_INVALID", "规划行数量超限")
             self._archive(state)
             state["selected"] = selected
             state["rows"] = rows
             state["rulings"].append({"version": state["version"], "actor": principal.actor_id,
-                                     "selected": copy.deepcopy(selected), "reason": request.reason})
+                                     "selected": copy.deepcopy(selected), "reason": request.reason,
+                                     "decisions": {field: {"source_id": source_id,
+                                         "artifact_sha256": by_id[source_id]["artifact_sha256"],
+                                         "actor": principal.actor_id, "reason": request.reason,
+                                         "at": datetime.now(timezone.utc).isoformat()}
+                                         for field, source_id in selected.items()}})
             self._audit(state, principal, "sources_adjudicated_and_generated",
                         {"selected": selected, "reason": request.reason})
             return self._view(state)
@@ -139,8 +184,9 @@ class ShadowService:
     def preview(self, principal, plan_id, data, audience):
         from app.sem_phase1a.excel import parse_workbook
 
-        with self._lock:
-            state = self._state(principal, plan_id)
+        self.cleanup_previews()
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id)
             view = self._view(state)
             parsed = parse_workbook(data, view, audience)
             changed = []
@@ -156,8 +202,9 @@ class ShadowService:
             report = self._view(proposed)
             preview = {"preview_id": preview_id, "plan_id": plan_id, "base_version": state["version"],
                        "audience": audience, "changes": changed, "p5": report["p5"], "p6": report["p6"],
-                       "rehearsal_only": True, "customer_confirmation": "pending", "applied": False}
-            self._previews[preview_id] = {"preview": preview, "rows": parsed}
+                       "rehearsal_only": True, "customer_confirmation": "pending", "applied": False,
+                       "expires_at": self.clock() + self.preview_ttl}
+            tx.previews[preview_id] = {"preview": preview, "rows": parsed}
             self._audit(state, principal, "excel_preview_only", {"preview_id": preview_id, "audience": audience,
                                                                  "changes": changed, "file_sha256": hashlib.sha256(data).hexdigest()})
             return copy.deepcopy(preview)
@@ -166,12 +213,14 @@ class ShadowService:
         from app.sem_phase1a.contracts import ApplyRequest
 
         request = ApplyRequest.model_validate(request.model_dump())
-        with self._lock:
-            state = self._state(principal, plan_id, request.expected_version)
-            pending = self._previews.get(request.preview_id)
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id, request.expected_version)
+            pending = tx.previews.get(request.preview_id)
             if pending is None or pending["preview"]["plan_id"] != plan_id:
-                raise ValueError("无该规划的预览")
+                raise ShadowError("PREVIEW_NOT_FOUND", "无该规划的预览")
             preview = pending["preview"]
+            if preview["expires_at"] <= self.clock():
+                raise ShadowError("PREVIEW_EXPIRED", "预览已过期")
             if preview["audience"] != "advisor":
                 raise ValueError("客户演练差异只预览，不导入正式确认链")
             if preview["applied"] or preview["base_version"] != state["version"]:
@@ -182,18 +231,47 @@ class ShadowService:
             self._audit(state, principal, "advisor_preview_applied", {"preview_id": request.preview_id})
             return self._view(state)
 
+    def edit_structure(self, principal, plan_id, request):
+        from app.sem_phase1a.contracts import StructureRequest
+        from app.sem_phase1a.structure import edit_rows
+
+        request = StructureRequest.model_validate(request.model_dump())
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id, request.expected_version)
+            if not state["rows"]:
+                raise ShadowError("STRUCTURE_INVALID", "先完成来源裁定")
+            self._archive(state)
+            for operation in request.operations:
+                before = copy.deepcopy(state["rows"])
+                state["rows"] = edit_rows(state["rows"], operation, state["sources"])
+                report = self._view(state)
+                before_ids = {r["row_id"]: r for r in before}
+                after_ids = {r["row_id"]: r for r in state["rows"]}
+                affected = {key for key in before_ids.keys() | after_ids.keys()
+                            if before_ids.get(key) != after_ids.get(key)}
+                self._audit(state, principal, "structure_edited", {
+                    "operation": operation.model_dump(), "reason": request.reason,
+                    "before": [r for r in before if r["row_id"] in affected],
+                    "after": [r for r in state["rows"] if r["row_id"] in affected],
+                    "p5": report["p5"], "p6": report["p6"]})
+            return self._view(state)
+
     def approve(self, principal, plan_id, request):
         from app.sem_phase1a.contracts import ApprovalRequest
 
         request = ApprovalRequest.model_validate(request.model_dump())
-        with self._lock:
-            state = self._state(principal, plan_id, request.expected_version)
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id, request.expected_version)
             view = self._view(state)
             if not view["p5"]["passed"]:
-                raise ValueError("精确重复硬阻断，先修改并重查")
-            if any(i["rule"] in {"budget_tree", "account_cap", "negative_overlap", "text_length", "declared_boundary"}
+                raise ShadowError("DUPLICATE_BLOCKED", "精确重复硬阻断，先修改并重查")
+            if any(i["rule"] in {"budget_tree", "account_cap", "negative_overlap", "text_length", "declared_boundary", "structure", "conflicts"}
                    for i in view["p6"]["issues"]):
-                raise ValueError("存在可修订的硬检查问题，先修改并重查")
+                rule_codes = {"budget_tree": "BUDGET_INVALID", "account_cap": "BUDGET_INVALID",
+                              "declared_boundary": "BUDGET_INVALID", "negative_overlap": "NEGATIVE_OVERLAP",
+                              "text_length": "TEXT_LIMIT", "structure": "STRUCTURE_INVALID", "conflicts": "CONFLICT_UNRESOLVED"}
+                code = next(rule_codes[i["rule"]] for i in view["p6"]["issues"] if i["rule"] in rule_codes)
+                raise ShadowError(code, "存在可修订的硬检查问题，先修改并重查")
             if not state["rows"] or len(set(request.row_ids)) != len(request.row_ids):
                 raise ValueError("逐项批准列表为空或重复")
             ids = {r["row_id"] for r in state["rows"]}
@@ -208,8 +286,8 @@ class ShadowService:
     def export(self, principal, plan_id, audience):
         from app.sem_phase1a.excel import write_workbook
 
-        with self._lock:
-            state = self._state(principal, plan_id)
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id)
             view = self._view(state)
             if not view["rows"]:
                 raise ValueError("先完成来源裁定")
@@ -221,12 +299,20 @@ class ShadowService:
             return data
 
     def expiry(self, principal, plan_id, now):
-        with self._lock:
-            state = self._state(principal, plan_id)
+        with self.store.transaction() as tx:
+            state = self._state(tx, principal, plan_id, write=False)
             if not state["rows"]:
                 raise ValueError("先生成影子规划")
-            return expiry_suggestions(LandingSubmission.model_validate(state["submission"]),
-                                      [PlanRow.model_validate(r) for r in state["rows"]], now)
+            suggestions = []
+            for entry in state["submissions"]:
+                payload = LandingSubmission.model_validate(entry["payload"])
+                refs = {source["source_id"] for source in state["sources"]
+                        if source["field"] == entry["prefix"] + "ends_at"}
+                rows = [PlanRow.model_validate(r) for r in state["rows"] if refs.intersection(r["source_refs"])]
+                if rows:
+                    suggestions.extend({**item, "page_id": payload.landing_page_id} for item in
+                                       expiry_suggestions(payload, rows, now))
+            return suggestions
 
 
 def export_execution(*args, **kwargs):

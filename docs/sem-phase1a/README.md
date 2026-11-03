@@ -1,42 +1,64 @@
-# SEM阶段1a第一刀：合成影子规划骨架
+# SEM阶段1a第二刀：持久化合成影子规划
 
-**内部规划/演练，不可上传百度。** 本切片只覆盖①新开户和③新品/活动。依赖阶段0 Draft #818、基线23c39b4；未合并、未部署，也未挂到app.main。一次性开发时间估算12～20h；完整1a仍为85～135h开发时间，这些是估算，不是实际耗时。
+**内部规划/演练，不可上传百度。** 只覆盖①新开户、③新品/活动；基线第一刀11a49247（Draft #819，依赖#818）。本刀开发时间估算12～20h，完整1a仍估算85～135h；估算不代表实际耗时。代码不注册app.main，不扩sem_runtime，不新增生产迁移，不连接生产库。真实HTTP/OCR/模型、情况②、正式客户确认和P9以后执行继续关闭。
 
-## 本刀流程
+## 持久化与并发
 
-1. P0/P1：在阶段0本地提交版本上创建演练规划，重新校验情况及账户已开好声明。仅内置101/201与102/202合成账户。权限仍由可信服务端注入AdvisorPrincipal，每个读写、导入、导出均查tenant/account与顾问角色。客户身份不能提交或导入。
-2. P2：CaptureAdapter/OcrAdapter协议可供以后另批适配；当前只实现FixtureCapture/FixtureOcr。fixture_adapters默认fixture，所有其他后端名均拒绝，代码中无HTTP客户端、OCR SDK、模型接口或环境变量开关。假OCR文本是预写夹具，不执行识别，不读取真实截图。来源记录原文SHA-256、fixture/页面/阶段0版本定位。
-3. P2a：按字段展示HTML、假OCR、提交文本候选及冲突。默认HTML识别值优先，其次假OCR，最后提交值。必须由顾问明确提交裁定；可按字段选择已存在的候选来源并填理由，记录操作者、时间及所选来源。两侧识别无结果时可降级提交字段，合计仍缺product/benefit/keywords则阻断并返回P1。
-4. P3：从裁定来源以固定规则生成项目→方案→单元→词、基础创意、高级创意占位，以及显式否词、预算/地域/时段/价帽/品牌/目标/起止边界。每行source_refs；方案名、单元名、词及创意等推断保持pending_verification，Excel显示“待核实”。未接大模型，不外发输入。
-5. P5/P6：与本批跨单元及当前合成账户现有资产查重，NFKC、空白归一、大小写归一后同类同文案重复硬阻断逐项批准。复用phase0 check_plan做预算、账户帽、字数、来源、否词误伤及冲突检查。内部字数保护值不是百度限制。官方限制未核实、线上事实未知、推断未核实一直阻断，P6不会因演练复核变为通过。
-6. P7：导出内部XLSX→顾问修改内容/结构预算列→导入预览→显式应用预览→逐行提交顾问演练复核。预览不改规划；应用后规划版本递增、全部旧复核失效并重跑P5/P6。精确重复、预算树/帽、否词误伤、已知字数及声明预算不一致均阻断演练复核。未知官方规则与待核实状态始终展示，演练复核仅记录审阅，不授予放行资格。
-7. P8/P8a：完成顾问逐项演练复核后可导出“客户审核表样例”，由顾问导入客户演练修改并看差异；只能预览，不应用、不记录客户批准，不实现回复凭证/正式确认链。
-8. P13：传入合成时钟生成截止提醒建议，包含来源及due，无截止则无建议；不排程、不自动暂停。
-9. P9及以后：无路由，export_execution/enable_plan始终抛PermissionError。状态固定mode=rehearsal、customer_confirmation=pending、execution_export_enabled=false、enable_allowed=false。
+`ShadowStore`/`Transaction`/`Records`是可替换接口，当前实现`SQLiteShadowStore(Path(...))`只接受显式本地路径。`ShadowService(submission_store, shadow_store)`推荐显式注入；省略第二参数时，在显式phase0数据库同目录创建独立的`<stem>.shadow.sqlite3`，不读取配置或环境变量。必须使用专用合成目录或TEMP；没有应用全局存储或生产迁移。
 
-## Excel约束与版本
+规划、来源、裁定、审批、历史、审计和预览均写入独立SQLite；服务没有跨请求规划/预览缓存。每次操作`BEGIN IMMEDIATE`，按需加载记录，提交时以内部storage revision做CAS更新；它覆盖审计/审批等不改变内容版本的写入。内容修改另检查客户端`expected_version`并递增规划版本。多连接/多进程同预览竞争只有一次成功；预览消费标记、规划版本/行、清空旧审批及审计在同一事务提交，任意提交错误全部回滚。SQLite是本机演练持久化，不宣称分布式或生产高可用。
 
-三页为“内部规划”“来源”“演练绑定”，第一页红色醒目标识禁止上传，内部列不冒充百度表头。只有内容及预算列允许修改，改后保留原来源且标待核实，差异和文件hash进审计。原始来源/裁定、行ID/父ID/类型/核实状态/复核列不能在Excel篡改，不能增删行或改变顺序。下一刀再扩结构编辑。
+预览默认TTL=3600秒，可通过构造参数注入测试时钟/TTL，返回`expires_at`（UTC Unix秒）。应用时检查过期；`cleanup_previews()`删除到期预览，创建规划或预览时也执行清理。删除不影响规划中的审计。没有后台任务或生产调度器。
 
-本刀仅一方案/一单元；分配预算须满足父子合计且不能覆盖P1声明预算。其他投放边界的编辑可留作待核实预览，但不会获得正式放行；应回P1创建新来源版本。服务操作发现阶段0同页更高版本立即409，旧规划必须重建。版本、plan_id、规划hash、来源hash、用途全部绑定；防跨规划、跨用途、重放。Excel复核列不能代替服务端逐项复核。
+每次读取规划，检查所有引用页的阶段0版本、hash及新版本；任一页有新版本即409，必须重建。phase0读取时也重验LandingSubmission、SHA-256、tenant/account/page与revision绑定；存储脏数据拒绝。返回值均为独立快照。
 
-导入限2MiB、100 ZIP成员、解压10MiB、1100行/8列；拒绝公式、超链接、外部关系、实体声明、宏、目录穿越及异常ZIP。导出对以=开头的来源强制文本。非本模块Excel不能作为导入输入。只提供内部XLSX，不提供任何百度正式CSV/TXT/XLSX。
+## 只读权限适配
 
-## 本地调用与验证
+`PrincipalAdapter.resolve(SessionIdentity)`是接口；`principal_dependency(adapter, resolve_identity)`生成未挂载的FastAPI依赖。`resolve_identity`必须由可信会话层提供，负责真实认证和既有顾问角色判定；不接受客户端JSON、裸Header或查询参数冒充身份。此刀只实现`LocalGrantPrincipalAdapter`，通过SQLite `mode=ro`及`query_only`读取**本地合成授权快照**，没有真实会话/生产库连接。
 
-依赖：requirements-sem-phase0.txt及requirements-sem-phase1a.txt；开发测试依赖已引用，不改CI。
+字段语义对照现有`security/advisor_scope.py`、`module_scope.py`及models：users停用/锁定、用户限定tenant、当前会话tenant/grant_id、advisor_tenant_grants当前未撤销代次、tenant实体存在、baidu_accounts归属及active状态；SEM仅active/trial且未过期可读写，suspended/closed/缺失一律拒绝。每次依赖解析重新查询，无授权缓存；缺表/非法数据fail closed，不降级到全租户权限。
+
+顾问可写当前授权账户；客户只读自身tenant的规划JSON和到期建议，没有写账户集合。客户不能创建、裁定、编辑、预览上传、应用、审批或触发带审计写入的Excel导出。底层可信Principal注入接口继续供合成测试使用，调用方不得跨请求缓存授权结果。真实认证、角色映射及生产适配仍需后续另批，不把合成快照当生产身份。
+
+## 多产品线、多页与结构编辑
+
+`POST /api/v1/sem/phase1a/shadow/plans/batch`接受`tenant_id`、`account_id`、`pages:[{page_id,submission_revision,fixture_id}]`。1～20个不重复页面，全部属于同账户，各页仍有阶段0明确声明；预算币种/周期必须相同。一个项目→每产品线一个方案→每落地页一个单元；初始单元预算取对应页声明，方案求和、项目再求和，不自动编造额度。账户帽及总声明预算继续P6硬检查；页面预算边界文本/引用不能被Excel覆盖。来源ID和字段按页隔离，冲突默认值显式按HTML→假OCR→submission优先级排序，输入列表顺序不影响结果。
+
+`POST /plans/{plan_id}/structure`接受`expected_version`、`reason`、`operations`（1～100项）：
+
+| action | 参数/行为 |
+|---|---|
+| add_campaign | parent_id=项目，text、budget_cents；可选source_refs，默认继承父行来源；返回服务端新行ID |
+| add_unit | parent_id=方案，text、budget_cents；来源规则同上 |
+| update | row_id=方案/单元，可改text或budget_cents；不能改身份/父级/来源 |
+| delete | row_id=方案/单元，级联删除其后代；项目不能删除 |
+| move_keyword | row_id=关键词，parent_id=目标单元；保留原来源，标待核实 |
+
+同请求原子提交、一次内容版本递增，全部旧审批失效；失败连同先前操作全部回滚。每项操作记录操作者、时间、理由、操作参数、受影响行的前后值及当时P5/P6报告。允许保存预算待平衡或方案暂无单元的阻断草稿，方便逐步结构编辑；这类草稿不能通过顾问演练复核。可同请求批量平衡已有行预算。新增方案后取得服务端ID，再新增其单元。总行数≤1000；Excel仍仅修改既有行内容/预算，不承担结构增删。
+
+P5在本批跨单元及合成既有资产中按NFKC/空白/大小写归一查同类精确重复。P6检查结构/预算树、账户帽、总声明、来源、字数、否词和裁定；每个冲突字段必须在最近裁定中具备与当前selected一致的source_id、原文hash、顾问、理由和时间。顾问提交裁定时把默认选择也逐字段记入decisions。演练逐项审批不修改来源核实状态，不解除未知平台规则/线上事实/推断待核实阻断；客户确认始终pending。
+
+否词按词/短语边界匹配：NFKC/casefold后，连续汉字段为一个词，空白/标点/汉字与拉丁数字切换构成边界；短语要求连续完整词序列。例如`free`不命中`carefree`，`费`不命中`费用咨询`，`免费`不命中未分词的`免费试用`；`免费 维修`命中`免费，维修`。不调用分词/OCR/外部服务，未分词复合语义不作完整语言理解保证。否词只作用于其父方案/单元的后代，移动关键词立即重查作用域。无截止显示「无截止」，原始来源JSON仍保留真实null。
+
+## 错误、安全与关闭的出口
+
+API错误固定为`detail:{code,message}`，不回显不可信输入或原始异常。主要code：CONTRACT_INVALID、EXCEL_INVALID_OR_TAMPERED、BUDGET_INVALID、DUPLICATE_BLOCKED、VERSION_CONFLICT、SCOPE_DENIED、PREVIEW_EXPIRED/PREVIEW_NOT_FOUND、STRUCTURE_INVALID、CONFLICT_UNRESOLVED、NEGATIVE_OVERLAP、TEXT_LIMIT、SOURCE_INVALID。请求体/路径/查询校验错误也统一脱敏。
+
+截图按魔数/解码确定格式，白名单PNG/JPEG/WebP；MIME或扩展名不匹配只返回静态warnings，不拒收合法图片。仍限单图10MiB、合计30MiB、10张、20M像素、单边10000、单帧；重新编码PNG删除元数据，不识别/OCR，不访问图内URL。
+
+内部XLSX绑定规划ID/版本/hash/来源hash/用途；禁止改身份、来源、核实/审批，禁止公式/宏/外部引用/ZIP超限。沿用第一刀内部格式，未新增百度文件或UI。旧的excel/{advisor|customer}、previews/{audience}、apply-preview、approvals等接口保持演练语义。无execute/enable/baidu-export/customer-confirm路由，export_execution和enable_plan无条件拒绝；审批也不能打开执行。
+
+## 复现与样例
 
 ```powershell
-python -m pytest -q tests/test_sem_phase0.py tests/test_sem_phase1a.py
-python -m app.sem_phase1a.demo --output docs/sem-phase1a/samples
+python -m pytest -q tests/test_sem_phase0.py tests/test_sem_phase1a.py tests/test_sem_phase1a_slice2.py
+python -m app.sem_phase1a.demo_slice2 --output docs/sem-phase1a/samples
 ```
 
-demo只加载本地合成fixture、在系统TEMP创建/销毁独立SQLite，输出合成冲突、全规划、查重阻断、顾问Excel改前/改后及差异、客户演练表及差异、到期建议。不会启动服务、抓页、OCR、调用模型或业务接口。样例包含随机演练ID与审计时间，不视为真实客户凭证。
+新fixture：`fixtures/slice2-pages.internal.json`，全合成example.invalid地址。四份新JSON：`slice2-multi-plan.internal.json`、`slice2-structure.internal.json`、`slice2-persistence.internal.json`、`slice2-auth.internal.json`，分别展示两产品线三页、结构审计/复检、重启与一次应用/重放拒绝、顾问/客户及暂停拒绝。所有数据库在TEMP创建并销毁；样例包含随机演练ID和时间，不是客户凭证。第一刀已有XLSX及JSON保留为历史样例，本刀未改其版式，不声称新增原生Excel验收。
 
-create_router(ShadowService(submission_store), resolve_principal)提供可挂接API，前缀/api/v1/sem/phase1a/shadow。POST /plans绑定阶段0页版本；GET /plans/{id}读状态；POST rulings裁定并生成；GET excel/{advisor|customer}导出；POST previews/{audience}以file上传；POST apply-preview显式应用顾问预览；POST approvals逐项演练复核；GET expiry-suggestions读取建议。请求模型见contracts.py，API合成全流程见tests/test_sem_phase1a.py。
+合成测试覆盖多进程/多连接、存储CAS、提交故障回滚、预览TTL、重启、权限撤销/暂停/跨tenant、客户只读、批量来源/预算、结构操作与原子性、逐字段P6裁定、中文否词、截图及结构化错误。CI配置未改；已有CI自动收集新增测试。
 
-## 隔离和下一刀
+## 下一刀入口
 
-SubmissionStore是显式TEMP/私有路径的阶段0演练SQLite，规划服务仅进程内存、RLock保护同进程版本变更，重启不保留；返回值深拷贝，历史版本/裁定/审计hash链可导出复核。**不是生产持久化、不可据此接真实账户或真实输入。** 跨进程并发事务、服务存储/附件ACL、真实会话授权适配、配额/超时/留存、HTML通用解析、OCR区域置信度及复核、复杂结构编辑都未做。
-
-下一刀先另定持久化与版本事务边界、现有鉴权适配（不扩大sem_runtime），继续本地合成影子证据，再处理多方案/单元及结构编辑。真实HTTP/OCR/模型须单独获准，不能直接解除fixture硬限制。情况②、正式客户确认和凭证、百度模板与执行继续关闭。合成测试不替代PLAN规定的影子天数/账户/样本门槛。
+本刀完成后即停。附件ACL/留存、解码隔离与配额/超时、真实会话/数据库适配、真实HTTP/OCR供应商及模型、正式客户确认/凭证、情况②和百度正式模板/执行均未做，需另定范围。仅本地合成测试与持久化，不替代PLAN的影子天数/账户/独立样本门槛；保持Draft，不合并、不部署。

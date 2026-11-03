@@ -1,0 +1,20 @@
+{
+  "synthetic": true,
+  "advisor_writable_accounts": [
+    [
+      101,
+      201
+    ]
+  ],
+  "customer_writable_accounts": [],
+  "customer_readable_accounts": [
+    [
+      101,
+      201
+    ]
+  ],
+  "suspended_denied": {
+    "advisor": true,
+    "customer": true
+  }
+}
