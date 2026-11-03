@@ -118,9 +118,11 @@ async def run(directory):
         ctx = await context(session, token(1))
         who = await adapter.resolve(ctx, session)
         assert who.role == 'advisor' and who.writable_accounts == frozenset({(101,201)})
+        assert who.readable_accounts == frozenset({(101,201)}) and (101,204) not in who.readable_accounts
         customer_ctx = await context(session, token(2, False))
         who = await adapter.resolve(customer_ctx, session)
         assert who.role == 'customer' and not who.writable_accounts and who.readable_accounts == frozenset({(101,201)})
+        assert (101,204) not in who.readable_accounts
         ctx.role_name = 'forged'
         try:
             await adapter.resolve(ctx, session)
@@ -190,6 +192,8 @@ async def run(directory):
                 raise AssertionError('invalid JWT accepted')
             except HTTPException as exc:
                 assert exc.status_code == 401
+    from sem_phase1a_management_checks import run_checks
+    await run_checks(factory, token)
     async with factory() as session, session.begin():
         await session.execute(text("UPDATE advisor_tenant_grants SET revoked_at=CURRENT_TIMESTAMP,revoked_by=1,revoke_reason='synthetic' WHERE id=10"))
     async with factory() as session:

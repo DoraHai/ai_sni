@@ -33,6 +33,7 @@ ROOT = "/api/v1/sem/phase1a/shadow/plans"
 
 
 def principal():
+    # Direct principals below are only for service/store unit setup and assertions.
     return AdvisorPrincipal("synthetic-advisor", "advisor", frozenset({(101, 201)}))
 
 
@@ -64,9 +65,9 @@ def edit(service, state, *operations):
         expected_version=state["version"], reason="合成结构调整", operations=list(operations)))
 
 
-def client(service, who=None, dependency=None):
+def client(service, *, dependency):
     app = FastAPI()
-    app.include_router(create_router(service, dependency or (lambda: who or principal())))
+    app.include_router(create_router(service, dependency))
     return TestClient(app)
 
 
@@ -301,10 +302,11 @@ def test_structure_failure_atomic_including_prior_operation(env, operation):
     assert service.read(principal(), state["plan_id"]) == before
 
 
-def test_api_batch_structure_and_codes_without_input_echo(env):
+def test_api_batch_structure_and_codes_without_input_echo(env, auth_db):
     submissions, service = env
     make_batch(submissions, service)
-    api = client(service)
+    api = client(service, dependency=principal_dependency(adapter(auth_db),
+        lambda: SessionIdentity(1, 'advisor', 101, 10)))
     created = api.post(ROOT + "/batch", json={"tenant_id": 101, "account_id": 201,
         "pages": [{"page_id": "page-1", "submission_revision": 1}]})
     assert created.status_code == 201
@@ -469,7 +471,7 @@ def test_customer_read_only_and_suspended_denied_all_routes(env, auth_db):
 
 
 @pytest.mark.parametrize("kind,expected", [("duplicate", "DUPLICATE_BLOCKED"), ("budget", "BUDGET_INVALID")])
-def test_api_actionable_check_codes(env, kind, expected):
+def test_api_actionable_check_codes(env, auth_db, kind, expected):
     from openpyxl import load_workbook
 
     _, service = env
@@ -482,7 +484,9 @@ def test_api_actionable_check_codes(env, kind, expected):
     book.close()
     preview = service.preview(principal(), state["plan_id"], out.getvalue(), "advisor")
     state = service.apply(principal(), state["plan_id"], ApplyRequest(expected_version=2, preview_id=preview["preview_id"]))
-    response = client(service).post(f"{ROOT}/{state['plan_id']}/approvals", json={"expected_version": 3,
+    api = client(service, dependency=principal_dependency(adapter(auth_db),
+        lambda: SessionIdentity(1, 'advisor', 101, 10)))
+    response = api.post(f"{ROOT}/{state['plan_id']}/approvals", json={"expected_version": 3,
         "row_ids": ["r-1"], "reason": "never-echo-untrusted"})
     assert response.status_code == 422 and response.json()["detail"]["code"] == expected
     assert "untrusted" not in response.text

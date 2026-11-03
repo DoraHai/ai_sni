@@ -31,11 +31,12 @@ class _SafeRoute(APIRoute):
 def create_router(service: ShadowService, resolve_principal):
     router = APIRouter(prefix="/api/v1/sem/phase1a/shadow", tags=["SEM合成影子演练"], route_class=_SafeRoute)
 
-    def invoke(function, *args):
+    def invoke(function, *args, write=True):
         try:
             return function(*args)
         except ScopeDenied:
-            raise HTTPException(403, {"code": "SCOPE_DENIED", "message": "无该合成账户的权限"}) from None
+            message = "无该租户账户的顾问提交权限" if write else "无该租户账户的读取权限"
+            raise HTTPException(403, {"code": "SCOPE_DENIED", "message": message}) from None
         except RevisionConflict:
             raise HTTPException(409, {"code": "VERSION_CONFLICT", "message": "来源/规划/预览版本已失效"}) from None
         except KeyError:
@@ -61,7 +62,7 @@ def create_router(service: ShadowService, resolve_principal):
 
     @router.get("/plans/{plan_id}")
     def read(plan_id: str, principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.read, principal, plan_id)
+        return invoke(service.read, principal, plan_id, write=False)
 
     @router.post("/plans/{plan_id}/rulings")
     def ruling(plan_id: str, body: RulingRequest, principal: AdvisorPrincipal = Depends(resolve_principal)):
@@ -80,7 +81,7 @@ def create_router(service: ShadowService, resolve_principal):
             if not (file.filename or "").lower().endswith(".xlsx"):
                 raise HTTPException(422, {"code": "EXCEL_INVALID_OR_TAMPERED", "message": "仅接受内部XLSX"})
             # 在读附件前完成账户权限检查。
-            view = invoke(service.read, principal, plan_id)
+            view = invoke(service.read, principal, plan_id, write=False)
             from app.sem_phase0.store import check_scope
             invoke(check_scope, principal, view["submission"]["tenant_id"], view["submission"]["account_id"])
             data = await file.read(MAX_XLSX_BYTES+1)
@@ -99,6 +100,6 @@ def create_router(service: ShadowService, resolve_principal):
     @router.get("/plans/{plan_id}/expiry-suggestions")
     def expiry(plan_id: str, now: datetime | None = None,
                principal: AdvisorPrincipal = Depends(resolve_principal)):
-        return invoke(service.expiry, principal, plan_id, now or datetime.now(timezone.utc))
+        return invoke(service.expiry, principal, plan_id, now or datetime.now(timezone.utc), write=False)
 
     return router

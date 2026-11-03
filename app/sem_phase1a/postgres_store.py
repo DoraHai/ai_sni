@@ -20,6 +20,8 @@ class SQLAlchemyShadowStore:
     @contextmanager
     def transaction(self):
         with self.connection_factory() as db:
+            if db.dialect.name == 'sqlite':
+                db.exec_driver_sql('BEGIN IMMEDIATE')
             tx = _Transaction(db)
             yield tx
             tx.plans.flush()
@@ -27,6 +29,16 @@ class SQLAlchemyShadowStore:
 
     def cleanup_previews(self, now):
         with self.connection_factory() as db:
+            if db.dialect.name == 'postgresql':
+                # Apply locks plan -> preview. Never wait while holding a cleanup
+                # lock: skip previews owned by any active reader/apply transaction.
+                return db.execute(text('WITH expired AS ('
+                    'SELECT id FROM sem_phase1a_shadow_previews WHERE expires_at<=:now '
+                    'FOR UPDATE SKIP LOCKED) '
+                    'DELETE FROM sem_phase1a_shadow_previews p USING expired e WHERE p.id=e.id'),
+                    {'now': now}).rowcount
+            # SQLite has one writer. Acquire its write lock before selecting/deleting.
+            db.exec_driver_sql('BEGIN IMMEDIATE')
             return db.execute(text('DELETE FROM sem_phase1a_shadow_previews WHERE expires_at<=:now'),
                               {'now': now}).rowcount
 
