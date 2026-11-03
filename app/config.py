@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
 
+    # GEO search visibility uses a separate, optional credential (never the SEM key).
+    deepseek_search_api_key: str = ""
+    deepseek_search_base_url: str = "https://api.deepseek.com"
+    deepseek_search_monthly_limit_cny: float = Field(default=30, ge=0, le=30)
+    deepseek_search_run_request_limit: int = Field(default=60, ge=1, le=60)
+    deepseek_search_qps: float = Field(default=4, gt=0, le=4)
+
     # 站长之家 SEO 数据。仅在 GEO 诊断后端调用，Key 不得进入前端构建产物。
     # 不同商品可能下发不同 API Key；各项独立 Key 为空时回退到通用 Key。
     chinaz_api_enabled: bool = True

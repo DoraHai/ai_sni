@@ -126,7 +126,7 @@ async def reconcile_stale_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
     """Mark hanging pending/running jobs failed; free content-task locks."""
-    if row.status not in {"pending", "running"}:
+    if getattr(row, "kind", None) == "search_visibility" or row.status not in {"pending", "running"}:
         return row
     pending_lim, running_lim = _stale_limits()
     if row.status == "pending":
@@ -181,6 +181,7 @@ async def reconcile_stale_content_tasks(
             .where(
                 GeoAsyncJob.tenant_id == tenant_id,
                 GeoAsyncJob.ref_id == task.id,
+                GeoAsyncJob.kind.in_((KIND_GENERATE, KIND_VARIANTS)),
                 GeoAsyncJob.status.in_(["pending", "running"]),
             )
             .limit(1)
@@ -236,7 +237,8 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
         rows = list(
             await session.scalars(
                 select(GeoAsyncJob).where(
-                    GeoAsyncJob.status.in_(["pending", "running"])
+                    GeoAsyncJob.status.in_(["pending", "running"]),
+                    GeoAsyncJob.kind != "search_visibility",
                 )
             )
         )
@@ -311,6 +313,8 @@ async def run_job_in_background(job_id: int) -> None:
             row = await session.get(GeoAsyncJob, job_id)
             if row is None:
                 return
+            if row.kind == "search_visibility":
+                return  # Dedicated worker owns its lock, visibility and billing protocol.
             await mark_job(session, job_id, status="running")
             row = await session.get(GeoAsyncJob, job_id)
             if row is not None and cancel_requested(row):
