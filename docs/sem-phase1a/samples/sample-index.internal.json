@@ -1,0 +1,19 @@
+{
+  "warning": "内部规划/演练，不可上传百度",
+  "synthetic": true,
+  "files": [
+    "advisor-edited.internal.xlsx",
+    "advisor-preview.internal.json",
+    "advisor.internal.xlsx",
+    "customer-diff.rehearsal.json",
+    "customer-review.rehearsal.xlsx",
+    "duplicate-block.internal.json",
+    "expiry-suggestions.internal.json",
+    "planning-package.internal.json",
+    "sample-index.internal.json",
+    "sources-and-conflicts.internal.json"
+  ],
+  "generator": "python -m app.sem_phase1a.demo --output <explicit-local-directory>",
+  "formal_confirmation": false,
+  "execution_export_enabled": false
+}

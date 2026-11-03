@@ -1,0 +1,2 @@
+# Optional internal shadow-planning Excel roundtrip, never a Baidu execution exporter.
+openpyxl==3.1.5

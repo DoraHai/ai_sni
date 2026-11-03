@@ -1,0 +1,8 @@
+{
+  "synthetic": true,
+  "accounts": [
+    {"tenant_id": 101, "account_id": 201, "budget_cap_cents": 100000,
+     "assets": [{"asset_id": "synthetic-existing-1", "kind": "keyword", "text": "合成旧型号滤芯"}]},
+    {"tenant_id": 102, "account_id": 202, "budget_cap_cents": 50000, "assets": []}
+  ]
+}

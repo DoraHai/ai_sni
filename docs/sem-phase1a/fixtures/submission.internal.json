@@ -1,0 +1,13 @@
+{
+  "tenant_id": 101, "account_id": 201,
+  "product_line_id": "synthetic-filter", "landing_page_id": "synthetic-page",
+  "expected_revision": 0, "case_type": "event", "account_ready": true,
+  "landing_url": "https://example.invalid/synthetic-launch",
+  "page_content": "product: 合成星河滤芯\nbenefit: 合成可换滤芯服务\nkeywords: 合成滤芯,合成滤芯咨询",
+  "goal": "合成咨询", "budget_cents": 12000, "budget_period": "daily", "currency": "CNY",
+  "bid_cap_cents": 200, "regions": ["合成地域"], "timezone": "Asia/Shanghai",
+  "schedule": [{"days": [1, 2, 3, 4, 5], "start_hour": 9, "end_hour": 18}],
+  "brand_rules": "仅使用合成星河品牌", "negative_keywords": ["合成免费维修"],
+  "starts_at": "2026-11-01T09:00:00+08:00", "ends_at": "2026-11-08T18:00:00+08:00",
+  "no_deadline_explicit": false, "link_source": "group", "authorized_scope": "仅合成本地演练"
+}
