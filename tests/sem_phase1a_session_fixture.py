@@ -71,7 +71,7 @@ async def run(directory):
     async with engine.begin() as db:
         await db.run_sync(metadata.create_all)
         # Add only new migration to the disposable schema; never migrations/env.py.
-        spec = importlib.util.spec_from_file_location('slice3', 'migrations/versions/0077_sem_phase1a_shadow.py')
+        spec = importlib.util.spec_from_file_location('slice3', 'migrations/versions/20261103_0112_sem_phase1a_shadow.py')
         migration = importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
         from alembic.migration import MigrationContext
         from alembic.operations import Operations
