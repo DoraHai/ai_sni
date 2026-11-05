@@ -10,7 +10,7 @@ from app.geo.content.schemas import ReviewDecision
 
 @pytest.mark.parametrize('changed', ['article', 'task'])
 def test_customer_review_rejects_stale_saved_version(changed):
-    task=NS(id=12,updated_at=datetime(2026,9,6))
+    task=NS(id=12, tenant_id=7, review_status='pending', updated_at=datetime(2026,9,6))
     session=NS(refresh=AsyncMock(),commit=AsyncMock())
     req=ReviewDecision(decision='approved',expected_article_id=17,
                       expected_updated_at='old' if changed=='task' else None)
@@ -23,6 +23,7 @@ def test_customer_review_rejects_stale_saved_version(changed):
                 tenant_id=None,
                 permissions={"geo.content": "edit"},
                 is_superadmin=False,
+                role_name="编辑",
                 can_edit=lambda key: key == "geo.content",
                 ensure_tenant=lambda _:None,
             ),session))

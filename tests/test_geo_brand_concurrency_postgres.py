@@ -112,8 +112,8 @@ def test_publication_write_sees_business_brand_changed_by_other_session():
 
                 seen = []
 
-                def gate(_, *, task, brand):
-                    seen.append(brand)
+                def gate(_, *, task, brand, article_id):
+                    seen.append((brand, article_id))
                     if brand == "新品牌":
                         raise PublishGateError("品牌标准未通过")
 
@@ -133,7 +133,7 @@ def test_publication_write_sees_business_brand_changed_by_other_session():
                     )
                 await first.rollback()
 
-            assert seen == ["新品牌"]
+            assert seen == [("新品牌", 16)]
             async with sessions() as check:
                 assert await check.scalar(text("SELECT count(*) FROM geo_publications")) == 0
                 assert (await check.get(GeoContentTask, 12)).status == "ready"

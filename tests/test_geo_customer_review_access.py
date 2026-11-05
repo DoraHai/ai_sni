@@ -83,7 +83,11 @@ def test_auth_payload_exposes_database_role_name_as_frontend_role_label():
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
 def test_bound_customer_reviewer_can_decide_current_pending_version(decision):
     updated = datetime(2026, 9, 8, 15, 45, 58)
-    task = NS(id=14, tenant_id=7, review_status="pending", updated_at=updated)
+    task = NS(id=14, tenant_id=7, review_status="pending", updated_at=updated, review_audit={
+        "schema_version": "geo.review.audit.v1",
+        "events": [{"event": "submitted", "actor_user_id": 9, "actor_role": "品牌方客户",
+                    "tenant_id": 7, "article_id": 22, "occurred_at": "2026-09-08T15:40:00Z"}],
+    })
     session = NS(refresh=AsyncMock(), commit=AsyncMock())
     req = ReviewDecision(
         decision=decision,
@@ -187,10 +191,16 @@ def test_customer_reviewer_cannot_approve_non_pending_task():
 
 
 def test_existing_geo_editor_review_flow_remains_compatible():
-    task = NS(id=14, tenant_id=7, review_status="pending", updated_at=datetime(2026, 9, 8))
+    task = NS(id=14, tenant_id=7, review_status="pending", updated_at=datetime(2026, 9, 8), review_audit={
+        "schema_version": "geo.review.audit.v1",
+        "events": [{"event": "submitted", "actor_user_id": 9, "actor_role": "品牌方客户",
+                    "tenant_id": 7, "article_id": 22, "occurred_at": "2026-09-08T00:00:00Z"}],
+    })
     session = NS(refresh=AsyncMock(), commit=AsyncMock())
     editor = _ctx(tenant_id=None, level="edit")
     with patch.object(routes, "_get_task", AsyncMock(return_value=task)), patch.object(
+        routes, "_latest_article", AsyncMock(return_value=NS(id=22))
+    ), patch.object(
         routes, "_sync_task_pipeline", AsyncMock()
     ), patch.object(
         routes, "_task_payload", AsyncMock(return_value={"review_status": "approved"})
@@ -201,3 +211,17 @@ def test_existing_geo_editor_review_flow_remains_compatible():
     assert result == {"review_status": "approved"}
     assert task.reviewed_by == 9
     session.commit.assert_awaited_once()
+
+
+def test_legacy_pending_review_without_submit_event_fails_closed():
+    task = NS(id=14, tenant_id=7, review_status="pending", updated_at=datetime(2026, 9, 8), review_audit=None)
+    session = NS(refresh=AsyncMock(), commit=AsyncMock())
+    with patch.object(routes, "_get_task", AsyncMock(return_value=task)), patch.object(
+        routes, "_latest_article", AsyncMock(return_value=NS(id=22))
+    ), pytest.raises(HTTPException) as error:
+        asyncio.run(routes.decide_task_review(
+            14, ReviewDecision(decision="approved"), 7, _ctx(tenant_id=None, level="edit"), session
+        ))
+    assert error.value.status_code == 400
+    assert "重新提交审核" in str(error.value.detail)
+    session.commit.assert_not_awaited()
