@@ -959,7 +959,7 @@ def session_for(revisions, rows):
 @pytest.mark.parametrize('revision', [
     '0105_seo_content_confirmations', '0106_seo_content_messages',
     '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants',
-    '0110_distribution_inbox', '0111_geo_autopatrol', 'future_shared_revision',
+    '0110_distribution_inbox', '0111_geo_autopatrol', '0112_sem_phase1a_shadow', '0113_sem_phase1a_grants', '0114_sem_phase0_sources', 'future_shared_revision',
 ])
 def test_complete_capabilities_accept_shared_future_revisions(revision):
     assert asyncio.run(ready(session_for([revision], catalog()))) is True

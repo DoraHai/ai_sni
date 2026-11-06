@@ -1,7 +1,8 @@
 import asyncio
+from contextlib import ExitStack
 import pytest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import Response
 
@@ -60,7 +61,7 @@ class _HealthConnection:
                 ("demo_tenant_binding_history", "trg_demo_tenant_binding_history_no_truncate", "before truncate for each statement reject_demo_tenant_binding_history_mutation"),
                 ("demo_tenant_bindings", "trg_demo_tenant_bindings_no_delete", "before delete for each row reject_demo_tenant_binding_delete"),
             ]
-            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"], ["0107_seo_site_delete"], ["0108_advisor_account_links"], ["0109_advisor_tenant_grants"], ["0110_distribution_inbox"], ["0111_geo_autopatrol"]):
+            if self.revisions in (["0098_demo_binding_no_truncate"], ["0099_geo_review_audit"], ["0100_seo_page_captures"], ["0101_seo_site_analytics"], ["0102_seo_monthly_report_template"], ["0103_seo_tdk_review"], ["0104_seo_page_ai_tdk"], ["0105_seo_content_confirmations"], ["0106_seo_content_messages"], ["0107_seo_site_delete"], ["0108_advisor_account_links"], ["0109_advisor_tenant_grants"], ["0110_distribution_inbox"], ["0111_geo_autopatrol"], ["0112_sem_phase1a_shadow"], ["0113_sem_phase1a_grants"], ["0114_sem_phase0_sources"]):
                 rows.append(("demo_tenant_bindings", "trg_demo_tenant_bindings_no_truncate", "before truncate for each statement reject_demo_tenant_binding_delete"))
             return rows
         if "pg_get_serial_sequence" in sql:
@@ -316,7 +317,7 @@ def test_health_accepts_reviewed_versions_using_actual_allowlist(revision):
     assert result['db'] == 'ok' and result['db_error'] is None
     assert result['schema_revision'] == revision
     assert result['required_schema_revision'] == '0099_geo_review_audit'
-    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol']
+    assert result['compatible_schema_revisions'] == ['0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol', '0112_sem_phase1a_shadow', '0113_sem_phase1a_grants', '0114_sem_phase0_sources']
 
 
 def test_0105_health_rejects_missing_content_confirmation_structure() -> None:
@@ -500,11 +501,62 @@ def test_structure_contract_preserves_smallint_fields():
 
 
 def test_runtime_allowlist_contains_only_exact_reviewed_versions():
-    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol'})
-    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol'})
+    assert seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS == frozenset({'0094_seo_qa_batches', '0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol', '0112_sem_phase1a_shadow', '0113_sem_phase1a_grants', '0114_sem_phase0_sources'})
+    assert seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS == frozenset({'0095_adopt_geo_ticket', '0096_sem_tasks', '0097_demo_tenant_bindings', '0098_demo_binding_no_truncate', '0099_geo_review_audit', '0100_seo_page_captures', '0101_seo_site_analytics', '0102_seo_monthly_report_template', '0103_seo_tdk_review', '0104_seo_page_ai_tdk', '0105_seo_content_confirmations', '0106_seo_content_messages', '0107_seo_site_delete', '0108_advisor_account_links', '0109_advisor_tenant_grants', '0110_distribution_inbox', '0111_geo_autopatrol', '0112_sem_phase1a_shadow', '0113_sem_phase1a_grants', '0114_sem_phase0_sources'})
     assert (
         seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS - {'0094_seo_qa_batches'}
     ) <= seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
+
+
+_SEM_COMPATIBLE_REVISIONS = [
+    "0112_sem_phase1a_shadow", "0113_sem_phase1a_grants", "0114_sem_phase0_sources",
+]
+_CURRENT_HEALTH_CHECKS = [
+    "_check_seo_structure", "_check_geo_ticket_adoption", "_check_demo_binding_structure",
+    "_check_geo_review_audit", "_check_capture_structure",
+    "_check_content_confirmation_structure", "_check_content_message_structure",
+    "_check_advisor_grants_structure",
+]
+
+
+@pytest.mark.parametrize("revision", ["0111_geo_autopatrol", *_SEM_COMPATIBLE_REVISIONS])
+@pytest.mark.parametrize("failed_check", [None, *_CURRENT_HEALTH_CHECKS])
+def test_sem_revisions_preserve_0111_health_checks_and_fail_closed(revision, failed_check):
+    assert revision in seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS
+    assert revision in seo_main.SEO_GEO_TICKET_REQUIRED_REVISIONS
+    calls = Mock()
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(seo_main, "engine", _HealthEngine([revision])))
+        checks = {}
+        for name in _CURRENT_HEALTH_CHECKS:
+            # Native PostgreSQL message inspection is covered separately. All
+            # other checks use the real catalog validation against offline rows.
+            check = AsyncMock(wraps=None if name == "_check_content_message_structure"
+                              else getattr(seo_main, name))
+            if name == failed_check:
+                check.side_effect = RuntimeError("structure drift: " + name)
+            checks[name] = stack.enter_context(patch.object(seo_main, name, check))
+            calls.attach_mock(check, name)
+        response = Response()
+        result = asyncio.run(seo_main.seo_health(response))
+
+    expected = _CURRENT_HEALTH_CHECKS
+    if failed_check:
+        expected = expected[:expected.index(failed_check) + 1]
+        assert response.status_code == 503 and result["schema"] == "error"
+        assert result["db_error"] == "structure drift: " + failed_check
+    else:
+        assert response.status_code == 200 and result["schema"] == "ok", result
+        assert result["schema_revision"] == revision and result["db_error"] is None
+        assert result["required_schema_revision"] == "0099_geo_review_audit"
+    assert [call[0] for call in calls.mock_calls] == expected
+    for name in expected:
+        checks[name].assert_awaited_once()
+        assert checks[name].await_args.args == checks[expected[0]].await_args.args
+    if "_check_demo_binding_structure" in expected:
+        assert checks["_check_demo_binding_structure"].await_args.kwargs == {
+            "require_current_truncate": True,
+        }
 
 
 def test_0097_health_requires_demo_binding_control_plane_objects() -> None:
