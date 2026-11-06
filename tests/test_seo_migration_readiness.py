@@ -68,3 +68,20 @@ def test_role_input_is_quoted_and_generated_files_cannot_overwrite_receipts(tmp_
 
 def test_unknown_revision_cannot_generate_a_false_approval():
     with pytest.raises(ValueError): readiness.render("9999_unknown","db","runtime","migration")
+
+
+def test_repository_migration_heads_are_runtime_compatible_without_connecting(monkeypatch):
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from app import seo_main
+
+    def denied(*args, **kwargs):
+        raise AssertionError("Migration graph inspection must not connect to a database")
+
+    monkeypatch.setattr(socket.socket, "connect", denied)
+    monkeypatch.setattr(sa, "create_engine", denied)
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).parents[1] / "migrations"))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert heads
+    assert set(heads) <= seo_main.SEO_COMPATIBLE_SCHEMA_REVISIONS
