@@ -366,7 +366,23 @@ def test_historical_internal_customer_direct_confirmation_is_pending():
         assert asyncio.run(_validated_content_confirmation_status(AsyncMock(), row, confirmation)) == "pending"
 
 
-@pytest.mark.parametrize("revision", ["0106_seo_content_messages", "0107_seo_site_delete", "0108_advisor_account_links"])
+def _message_repository_migration_heads():
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    # Inspect only revision metadata; never load env.py or run migrations.
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).parents[1] / "migrations"))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert heads
+    return [pytest.param(head, id=f"repository-head-{head}") for head in heads]
+
+
+@pytest.mark.parametrize("revision", [
+    "0106_seo_content_messages", "0107_seo_site_delete", "0108_advisor_account_links",
+    "0109_advisor_tenant_grants", "0110_distribution_inbox", "0111_geo_autopatrol",
+    "0112_sem_phase1a_shadow", "0113_sem_phase1a_grants", "0114_sem_phase0_sources",
+] + _message_repository_migration_heads())
 def test_message_customer_path_uses_the_same_identity_rule(revision):
     session = AsyncMock()
     revisions = MagicMock()
@@ -384,6 +400,27 @@ def test_message_customer_path_uses_the_same_identity_rule(revision):
         actor, _ = asyncio.run(message_scope(session, ctx, 1, 9, 88))
         assert actor["kind"] == "customer"
         customer.assert_awaited_once_with(session, ctx, 1, lock=False)
+
+
+@pytest.mark.parametrize("revision_rows", [
+    [], ["0105_seo_content_confirmations"], ["future_shared_revision"],
+    ["0111_geo_autopatrol", "0114_sem_phase0_sources"],
+    ["0114_sem_phase0_sources", "0114_sem_phase0_sources"],
+])
+def test_message_schema_gate_still_fails_closed(revision_rows):
+    session = AsyncMock()
+    revisions = MagicMock()
+    revisions.scalars.return_value = revision_rows
+    session.execute.return_value = revisions
+    with patch("app.api.seo_messages.ensure_module_access", new=AsyncMock()):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(message_scope(session, _visibility_ctx(), 1, 9, 88))
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "conversation_schema_unavailable"
+    session.scalar.assert_not_awaited()
+    session.get.assert_not_awaited()
+    session.scalars.assert_not_awaited()
+    session.commit.assert_not_awaited()
 
 
 def test_api_and_workflow_use_the_shared_capability_gate():
