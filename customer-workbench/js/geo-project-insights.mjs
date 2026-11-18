@@ -10,7 +10,7 @@ export const geoModelNote = '<p class="geo-footnote">模型 API 观测。元宝�
 const integer = (n) => Number.isSafeInteger(n) && n >= 0 ? String(n) : '暂无';
 const number = (n) => typeof n === 'number' && Number.isFinite(n) ? n.toFixed(1).replace(/\.0$/, '') : '暂无';
 const percent = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 100 ? number(n) + '%' : '暂无';
-const states = {not_tested: '未检测', not_configured: '未配置', failed: '检测失败', tested_excluded: '已检测，未计入',
+const states = {not_tested: '未检测', not_configured: '未配置', failed: '检测失败', tested_excluded: '已保存，未计入',
   no_publications: '暂无发布文章', insufficient_evidence: '引用证据不足'};
 const state = (key) => states[key] || '暂无';
 const read = (name, resource, params = {}) => `<button data-geo="read" data-resource="${esc(resource)}" data-params="${esc(JSON.stringify(params))}">${esc(name)}</button>`;
@@ -30,15 +30,16 @@ function mentionCell(cell, time, compact = false) {
     Number.isSafeInteger(cell.total) && cell.total > 0 && Number.isSafeInteger(cell.mentioned) &&
     cell.mentioned >= 0 && cell.mentioned <= cell.total;
   const result = valid ? `${cell.mentioned}/${cell.total} · ${percent(cell.percentage)}`
-    : compact && (cell?.status === 'not_configured' || cell?.status === 'failed')
-      ? `未检测（${state(cell.status)}）` : state(Object.hasOwn(states, cell?.status) ? cell.status : 'not_tested');
-  const reasons = cell?.status === 'tested_excluded'
-    ? `<p class="geo-footnote">${esc((Array.isArray(cell.excluded_reason_codes) && cell.excluded_reason_codes.length
-      ? cell.excluded_reason_codes : ['unknown']).map(geoExcludedReason).join('；'))}</p>` : '';
+    : state(Object.hasOwn(states, cell?.status) ? cell.status : 'not_tested');
+  const exclusionCodes = cell?.status === 'tested_excluded' ? cell.excluded_reason_codes : cell?.saved_exclusion_reason_codes;
+  const reasons = cell?.status === 'tested_excluded' || (Array.isArray(exclusionCodes) && exclusionCodes.length)
+    ? `<p class="geo-footnote">已保存回答未计入原因：${esc((Array.isArray(exclusionCodes) && exclusionCodes.length
+      ? exclusionCodes : ['unknown']).map(geoExcludedReason).join('；'))}</p>` : '';
   const sample = valid && (cell.small_sample || cell.total < 3) ? '<small>小样本，结果仅供参考</small>' : '';
-  const saved = `<small>样本时间：${esc(cell?.last_sample_at ? time(cell.last_sample_at) : '暂无')}</small>${reasons}`;
+  const savedCount = Number.isSafeInteger(cell?.saved_count) ? `<small>本正式周已保存 ${integer(cell.saved_count)} 条回答</small>` : '';
+  const saved = `${savedCount}<small>样本时间：${esc(cell?.last_sample_at ? time(cell.last_sample_at) : '暂无')}</small>${reasons}`;
   return compact ? `<strong>${esc(result)}</strong>${sample}<details><summary>样本依据</summary>${saved}</details>`
-    : `<p>${esc(result)}</p>${reasons}<small>样本时间：${esc(cell?.last_sample_at ? time(cell.last_sample_at) : '暂无')}</small>${sample}`;
+    : `<p>${esc(result)}</p>${saved}${sample}`;
 }
 export function geoMatrix(question, time) {
   return `${geoQuestionOpenWeek(question.open_week_detected_count)}<div class="geo-matrix" aria-label="六家模型提及率">${geoEngines.map(([key, name]) => {
@@ -61,17 +62,17 @@ export function geoQuestionFilters(data, params = {}) {
 function cards(metrics, ready) {
   const m = metrics || {}, sample = integer(m.sample_count);
   return `<div class="geo-metrics geo-summary">${[
-    ['品牌提及率', ready && m.sample_count > 0 ? percent(m.brand_mention_rate) : '暂无', `合格回答 ${sample} 条`],
-    ['品牌提及回答数', ready && m.sample_count > 0 ? integer(m.brand_mention_answer_count) : '暂无', `合格回答 ${sample} 条；每条回答计一次`],
-    ['平均推荐位置', ready && m.valid_position_count > 0 ? number(m.average_recommendation_position) : '暂无', `有效位置 ${integer(m.valid_position_count)} 条；首选=1、备选=2、顺带=3`],
-    ['品牌正向评价率', ready && m.annotated_mention_count > 0 ? percent(m.brand_positive_rate) : '暂无', `已标注 ${integer(m.annotated_mention_count)} / 提及 ${integer(m.mention_count)} 条`],
+    ['品牌提及率', ready && m.sample_count > 0 ? percent(m.brand_mention_rate) : '暂不可计算', `合格回答 ${sample} 条`],
+    ['品牌提及回答数', ready && m.sample_count > 0 ? integer(m.brand_mention_answer_count) : '暂不可计算', `合格回答 ${sample} 条；每条回答计一次`],
+    ['平均推荐位置', ready && m.valid_position_count > 0 ? number(m.average_recommendation_position) : '暂不可计算', `有效位置 ${integer(m.valid_position_count)} 条；首选=1、备选=2、顺带=3；仅为类别编码均值，不是搜索排名`],
+    ['品牌正向评价率', ready && m.annotated_mention_count > 0 ? percent(m.brand_positive_rate) : '暂不可计算', `有效品牌评价 ${integer(m.annotated_mention_count)} / 提及 ${integer(m.mention_count)} 条${m.annotated_mention_count > 0 && m.annotated_mention_count < 3 ? '；小样本，仅供参考' : ''}`],
   ].map(([name, value, basis]) => `<article><h3>${name}</h3><strong>${value}</strong><p>${basis}</p></article>`).join('')}</div><p>推荐位置分布：首选 ${integer(m.position_distribution?.first)} / 备选 ${integer(m.position_distribution?.alternative)} / 顺带 ${integer(m.position_distribution?.mentioned)}。</p>`;
 }
 export function geoInsightResource(resource, value, {time, link, basis}) {
   const d = value.data;
   if (resource === 'summary') {
     const ready = d.sample_status === 'ready';
-    return `<h2>品牌表现汇总</h2>${geoOpenWeekProgress(d.open_week_progress)}<p>${esc(geoPeriod(d.period || value.basis?.period))}</p><p>同一项目、同一完整周的合格回答。${ready ? '' : '合格样本不足，四项指标暂无。'}样本 ${integer(d.qualified_counts.samples)} / 问题 ${integer(d.qualified_counts.questions)} / 引擎 ${integer(d.qualified_counts.engines)}；最低要求 ${integer(d.minimum_counts.samples)} 条回答、${integer(d.minimum_counts.questions)} 题、${integer(d.minimum_counts.engines)} 个引擎。</p>${cards(d.metrics, ready)}<details><summary>分平台汇总与样本</summary>${geoEngines.map(([key, name]) => `<h3>${name}</h3>${cards(d.by_engine.find((e) => e.engine_key === key)?.metrics, ready)}`).join('')}</details>${geoModelNote}${notes(d.footnotes)}${basis(value)}`;
+    return `<h2>品牌表现汇总</h2><p>正式周 · ${esc(geoPeriod(d.period || value.basis?.period))}</p><p>同一项目、同一完整周的合格回答。${ready ? '' : '正式周覆盖未达门槛，品牌指标暂不可计算。'}合格回答 ${integer(d.qualified_counts.samples)} / 问题 ${integer(d.qualified_counts.questions)} / 引擎 ${integer(d.qualified_counts.engines)}；最低要求 ${integer(d.minimum_counts.samples)} 条回答、${integer(d.minimum_counts.questions)} 题、${integer(d.minimum_counts.engines)} 个引擎。</p>${cards(d.metrics, ready)}<details><summary>分平台汇总与样本</summary>${geoEngines.map(([key, name]) => `<h3>${name}</h3>${cards(d.by_engine.find((e) => e.engine_key === key)?.metrics, ready)}`).join('')}</details>${geoOpenWeekProgress(d.open_week_progress)}${geoModelNote}${notes(d.footnotes)}${basis(value)}`;
   }
   if (resource === 'article-citations') {
     const c = d.coverage;

@@ -85,7 +85,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     await p.click('[data-tab=data]');
     await p.waitForFunction(() => document.querySelector('.geo-summary')?.textContent.includes('1.5'));
     await assertNoPatrolControls(p);
-    assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /本周（未结束）已检测 26 条，下周一计入正式指标/);
+    assert.match(await p.$eval('.geo-workspace', (e) => e.textContent), /进行中本周（未结束）：已保存 26 条真实 API 回答/);
     await p.click('.geo-tabs [data-resource=questions]');
     await p.waitForSelector('[data-geo-questions]');
     await p.select('[name=business_id]', '2');
@@ -117,9 +117,9 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     assert.equal(await p.$('[data-geo=more]'), null);
     assert.deepEqual(await p.$$eval('.geo-question-table thead th', (headers) => headers.slice(3).map((n) => n.textContent)), ['豆包', 'DeepSeek', '千问', '元宝', '文心', 'Kimi']);
     text = await p.$eval('.geo-workspace', (e) => e.textContent);
-    for (const line of ['本周（未结束）已检测 26 条，下周一计入正式指标', '本周（未结束）已检测 4 条，下周一计入',
-      '已检测，未计入', '平台来源未核实；回答判读未完成', '回答记录不可读', '样本时间：2026年10月15日 10:00']) assert(text.includes(line), line);
-    const excludedText = await p.$eval('.geo-question-table', (e) => [...e.querySelectorAll('td')].filter((s) => s.textContent.includes('已检测，未计入')).map((s) => s.textContent).join(''));
+    for (const line of ['进行中本周（未结束）：已保存 26 条真实 API 回答', '进行中本周已保存 4 条回答，周结束后仍须通过正式资格检查',
+      '已保存，未计入', '平台来源未核实；回答判读未完成', '回答记录不可读', '样本时间：2026年10月15日 10:00']) assert(text.includes(line), line);
+    const excludedText = await p.$eval('.geo-question-table', (e) => [...e.querySelectorAll('td')].filter((s) => s.textContent.includes('已保存，未计入')).map((s) => s.textContent).join(''));
     assert(!excludedText.includes('0/0') && !excludedText.includes('%'));
     await assertNoPatrolControls(p);
     await p.screenshot({path: path.join(shots, 'data-matrix-desktop.png'), fullPage: true});
@@ -156,7 +156,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     openCount = 0;
     await p.click('[data-tab=home]'); await p.click('[data-geo=refresh]');
     await p.waitForNetworkIdle({idleTime: 200});
-    assert.match(await p.$eval('.geo-open-week', (e) => e.textContent), /本周（未结束）暂未检测/);
+    assert.match(await p.$eval('.geo-open-week', (e) => e.textContent), /进行中本周（未结束）：已保存 0 条真实 API 回答（当前非品牌点名范围）。暂无已保存回答；尝试或失败情况请查看逐模型状态/);
     legacy = true;
     await p.click('[data-geo=refresh]');
     await p.waitForNetworkIdle({idleTime: 200});

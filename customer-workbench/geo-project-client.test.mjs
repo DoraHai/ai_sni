@@ -303,7 +303,7 @@ test('null metrics, qualified true zero, observation fractions, confirmations an
     ['overview', 'visibility', 'executions'].map((r) => [r, {value: geoFixture(r)}]),
   );
   const home = geoHome(slots);
-  assert.match(home, /当前待确认.*1 项稿件/);
+  assert.match(home, /可交付且待确认.*1 项稿件/);
   assert.match(home, /仅最近20项/);
   assert.match(home, /月度计划/);
   assert.match(home, /统计周期：2026-10-12 至 2026-10-18（北京时间）/);
