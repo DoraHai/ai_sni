@@ -3,12 +3,29 @@ import assert from 'node:assert/strict';
 import {createGeoProjectClient} from './js/geo-project-client.mjs';
 import {createGeoProjectPanel} from './js/geo-project-panel.mjs';
 import {geoClientRoute, geoClientQuery} from './js/geo-client-routes.mjs';
-import {geoResource, geoHome, geoBasis, geoWeekly, geoTime} from './js/geo-project-view.mjs';
+import {geoResource, geoHome, geoBasis, geoWeekly, geoTime, geoExecutions} from './js/geo-project-view.mjs';
 import {geoMatrix, geoQuestionTable, geoQuestionFilters, geoExcludedReason} from './js/geo-project-insights.mjs';
 import {geoPeriod, geoOpenWeekProgress, geoQuestionOpenWeek} from './js/geo-project-display.mjs';
 import {geoFixture, question} from './tests/geo-client-fixture.mjs';
 
 const context = {connected: true, tenantId: 1, projectId: 10, userId: 7, revision: 1};
+test('plan preparation and delivery scope stay read-only and missing metrics are not zero', () => {
+  const plan = structuredClone(geoFixture('executions'));
+  plan.service_plan = {revision: 2, enabled: false, status: 'active', interval_days: 7, prompt_ids: []};
+  plan.preparation = {status: 'not_ready', project_prompt_count: 0,
+    reason_codes: ['no_plan_questions', 'advisor_assignment_unavailable']};
+  const html = geoExecutions(plan, true);
+  for (const text of ['已有保存计划', '版本 2', '开关：未启用', '计划尚未选择问题', '负责顾问资格不可用', '平台配置管理员', '客户在此只读']) assert(html.includes(text), text);
+  assert(!html.includes('DO_NOT_DISPLAY'));
+  assert(!/data-geo="(?:save|enable)"/.test(html));
+  const deliveries = geoResource('deliveries', geoFixture('deliveries'));
+  assert.match(deliveries, /当前可交付版本范围/);
+  assert.match(deliveries, /不代表全部历史交付，也不是 SEO 已发布数/);
+  const summary = geoResource('summary', geoFixture('summary'));
+  assert.match(summary, /暂不可计算/);
+  assert(!summary.includes('0%'));
+  assert.match(summary, /类别编码均值/);
+});
 const response = (v, status = 200) => new Response(JSON.stringify(v), {status});
 const allowed = (resource, query = '') => {
   const u = new URL(`/api/v1/geo/projects/10/client/${resource}?tenant_id=1${query}`, 'https://fixture.test');
@@ -104,7 +121,7 @@ test('all GEO period displays use the same customer-facing inclusive dates', () 
   }
 });
 test('open-week progress handles zero/missing/malformed counts without changing formal metrics', () => {
-  assert.equal(geoOpenWeekProgress({detected_answer_count: 0}), '<p class="geo-open-week">本周（未结束）暂未检测</p>');
+  assert.equal(geoOpenWeekProgress({detected_answer_count: 0}), '<p class="geo-open-week">进行中本周（未结束）：已保存 0 条真实 API 回答，当前范围暂未检测。下周一结束本周后，符合正式资格的回答才可计入正式周；保存不等于计入。</p>');
   for (const n of [undefined, null, -1, 0.5, '26', '<img>', NaN, Infinity]) {
     assert.equal(geoOpenWeekProgress({detected_answer_count: n}), '');
     assert.equal(geoQuestionOpenWeek(n), '');
@@ -113,19 +130,19 @@ test('open-week progress handles zero/missing/malformed counts without changing 
   assert.equal(geoQuestionOpenWeek(0), '');
   const overview = structuredClone(geoFixture('overview'));
   const home = () => geoHome({overview: {value: overview}});
-  assert.match(home(), /本周（未结束）已检测 26 条，下周一计入正式指标/);
+  assert.match(home(), /进行中本周（未结束）：已保存 26 条真实 API 回答/);
   assert.match(home(), /检测数据还不够/);
   assert(!home().includes('0%'));
   delete overview.data.open_week_progress;
   assert(!home().includes('geo-open-week'));
-  assert.match(geoHome({overview: {value: overview}, visibility: {value: geoFixture('visibility')}}), /已检测 26 条/);
+  assert.match(geoHome({overview: {value: overview}, visibility: {value: geoFixture('visibility')}}), /已保存 26 条真实 API 回答/);
   for (const resource of ['visibility', 'summary', 'questions', 'questions/3']) {
     const value = structuredClone(geoFixture(resource));
     const formalData = structuredClone(value.data);
-    assert.match(geoResource(resource, value), /本周（未结束）已检测 26 条，下周一计入正式指标/);
+    assert.match(geoResource(resource, value), /进行中本周（未结束）：已保存 26 条真实 API 回答/);
     assert.deepEqual(value.data, formalData);
     value.data.open_week_progress.detected_answer_count = 0;
-    assert.match(geoResource(resource, value), /本周（未结束）暂未检测/);
+    assert.match(geoResource(resource, value), /进行中本周（未结束）：已保存 0 条真实 API 回答，当前范围暂未检测/);
     delete value.data.open_week_progress;
     if (value.data.question) delete value.data.question.open_week_detected_count;
     for (const q of value.data.items || []) delete q.open_week_detected_count;
@@ -148,7 +165,7 @@ test('tested_excluded renders every contracted reason, saved time and no percent
     total: 0, percentage: 0, last_sample_at: '2026-10-15T02:00:00Z',
     excluded_reason_codes: ['engine_source_untrusted', 'analysis_incomplete', '<img src=x>']}]};
   let html = geoMatrix(q, geoTime);
-  assert.match(html, /已检测，未计入/);
+  assert.match(html, /已保存，未计入/);
   assert.match(html, /平台来源未核实；回答判读未完成；不符合正式统计条件/);
   assert.match(html, /样本时间：2026年10月15日 10:00/);
   assert(!html.includes('0%') && !html.includes('0/0') && !html.includes('<img'));
@@ -190,7 +207,7 @@ test('new exact read routes accept contracted filters and deny arbitrary export/
 test('four summary values respect qualification, actual zeros, position and annotation sample counts', () => {
   const v = structuredClone(geoFixture('summary', {ready: true}));
   let html = geoResource('summary', v);
-  for (const text of ['品牌提及率', '品牌提及回答数', '平均推荐位置', '品牌正向评价率', '1.5', '有效位置 2', '已标注 2 / 提及 4', '元宝数据取自腾讯混元模型接口']) assert(html.includes(text));
+  for (const text of ['品牌提及率', '品牌提及回答数', '平均推荐位置', '品牌正向评价率', '1.5', '有效位置 2', '有效品牌评价 2 / 提及 4', '元宝数据取自腾讯混元模型接口']) assert(html.includes(text));
   v.data.metrics.brand_mention_rate = 0;
   assert.match(geoResource('summary', v), />0%/);
   v.data.sample_status = 'insufficient';
