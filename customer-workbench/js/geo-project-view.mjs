@@ -209,7 +209,7 @@ export function geoHome(slots, simulatedMetrics = null) {
     ? `可交付且待确认：${v.content.pending_review_count > 0 ? '有 ' + count(v.content.pending_review_count) + ' 项稿件待客户确认' : '当前无可交付且待确认稿件'}`
     : '待确认稿件' + (slots.overview?.error === 'GEO_NOT_OPEN' ? '暂未开放' : '读取失败');
   const monitor = simulatedMetrics !== null
-    ? 'GEO 检测数据：查看模拟样本与问题提及情况'
+    ? 'GEO 数据：查看样本与问题提及情况'
     : v
     ? `${geoPeriod(v.weekly?.period)}：${v.monitoring.active_nonbrand_question_count === 0 ? '当前项目尚无归属监测问题' : v.monitoring.attention_question_count > 0 ? '本统计周期内有 ' + count(v.monitoring.attention_question_count) + ' 个问题建议查看观测证据' : '该周无上述规则命中的关注问题'}${v.weekly?.sample_status === 'insufficient' ? '；检测数据还不够' : ''}`
     : '监测关注项' + (slots.overview?.error === 'GEO_NOT_OPEN' ? '暂未开放' : '读取失败');

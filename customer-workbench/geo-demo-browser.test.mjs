@@ -120,6 +120,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.waitForSelector('[data-geo-questions]');
     assert.equal(await p.$$eval('.geo-demo-work .geo-question-table thead th', (n) => n.length), 22);
     assert.equal(await p.$$eval('.geo-demo-work [data-demo-engine]', (n) => n.length), 56);
+    assert.doesNotMatch(await p.$eval('.geo-demo-work', (e) => e.textContent), /演示|模拟/);
     await screenshot('formal-question-filters.png', true);
     await p.select('[data-geo-questions] [name=business_id]', '2');
     await p.$eval('[data-geo-questions]', (e) => e.requestSubmit());
@@ -137,7 +138,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
       await p.click(`.geo-tabs [data-tab=${tab}]`);
       await p.waitForNetworkIdle({idleTime: 200});
       assert(!await p.$eval('.geo-workspace', (e) => e.innerText.includes('数据范围与依据')));
-      assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /演示数据，不代表真实引擎检测或实际效果/);
+      assert.doesNotMatch(await p.$eval('.geo-workspace', (e) => e.innerText), /演示|模拟/);
       await screenshot(`formal-${tab}.png`);
     }
     await p.click('[data-view=demo]');
