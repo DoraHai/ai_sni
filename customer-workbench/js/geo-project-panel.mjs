@@ -2,6 +2,7 @@ import {createGeoProjectClient} from './geo-project-client.mjs';
 import {geoTabs, geoHome, geoResource, geoExecutions, geoStatus} from './geo-project-view.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 import {geoQuestionFilters} from './geo-project-insights.mjs';
+import {geoDemoArea, isDemoProject} from './geo-project-demo.mjs';
 export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate = () => true}) {
   const client = createGeoProjectClient({transport: host.transport, getContext: host.getContext});
   let node = null,
@@ -15,6 +16,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     history = [],
     actionError = null,
     downloading = false;
+  let demoFilter = {};
   const available = (key) => !!slots[key]?.value;
   function tabs() {
     return geoTabs.filter(
@@ -66,7 +68,10 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       tab === 'data'
         ? `<form data-geo-week><label>统计周期结束后的周一（北京时间） <input name="week_end" type="date" value="${esc(week || '')}" required></label><button>查看该周</button></form><p>正式指标来自已保存检测结果，历史按当前项目归属重算。</p><button data-geo="read" data-resource="visibility">AI 可见度概览</button><button data-geo="read" data-resource="questions">问题监测</button><button data-geo="read" data-resource="answers">回答证据</button><button data-geo="download" data-format="pdf" ${downloading ? 'disabled' : ''}>下载 PDF 报告</button><button data-geo="download" data-format="xlsx" ${downloading ? 'disabled' : ''}>下载 Excel 报告</button>${downloading ? '<p role="status">正在读取报告…</p>' : ''}`
         : '';
-    node.innerHTML = `<nav class="geo-tabs" aria-label="GEO 工作台">${tabs()
+    const context = host.getContext();
+    const demo = isDemoProject(context) && ['home', 'work', 'data'].includes(tab)
+      ? geoDemoArea(slots.overview?.value || {tenant_id: context.tenantId, project_id: context.projectId, read_only: true}, demoFilter) : '';
+    node.innerHTML = `${demo}<nav class="geo-tabs" aria-label="GEO 工作台">${tabs()
       .map(
         ([key, name]) =>
           `<button data-geo="tab" data-tab="${key}" ${key === tab ? 'aria-current="page"' : ''}>${name}</button>`,
@@ -141,6 +146,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       await selectTab(tab);
   }
   function reset() {
+    demoFilter = {};
     epoch++;
     client.invalidate();
     slots = {};
@@ -284,6 +290,13 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   }
   async function submit(event) {
     const form = event.target;
+    if (form.matches('[data-geo-demo]') && form.elements.kind && form.elements.q) {
+      event.preventDefault();
+      if (!canNavigate()) return;
+      demoFilter = {kind: form.elements.kind.value, q: form.elements.q.value.trim()};
+      paint();
+      return;
+    }
     if (form.matches('[data-geo-questions]') && form.elements.business_id) {
       event.preventDefault();
       if (!canNavigate()) return;
