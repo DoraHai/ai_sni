@@ -94,10 +94,13 @@ def test_project_navigation_and_route_are_visible_in_geo_source():
     root = Path(__file__).resolve().parents[1]
     nav = (root / "frontend/src/utils/geoPrototypeNavigation.js").read_text(encoding="utf-8")
     router = (root / "frontend/geo-frontend/src/router.js").read_text(encoding="utf-8")
+    main_router = (root / "frontend/src/router/index.js").read_text(encoding="utf-8")
     view = (root / "frontend/src/views/geo/GeoProjectsView.vue").read_text(encoding="utf-8")
     assert "label: '项目管理', path: '/geo/projects', key: 'geo.assets'" in nav
     assert "path: 'projects'" in router
     assert "perm: 'geo.assets'" in router
+    assert "path: 'projects', component: () => import('../views/geo/GeoProjectsView.vue')" in main_router
+    assert "title: '项目管理', documentTitle: 'GEO 工作台｜项目管理', perm: 'geo.assets'" in main_router
     assert "fetchGeoProjects" in view
 
 
