@@ -172,6 +172,7 @@ def test_qualified_matrix_keeps_observed_and_small_sample_despite_latest_exclude
     env.save(run)
     cell = get(env, '/questions/1').json()['data']['question']['by_engine'][0]
     assert cell['status'] == 'observed' and cell['total'] == 7 and cell['excluded_reason_codes'] == []
+    assert cell['saved_count'] == 8 and cell['saved_exclusion_reason_codes'] == ['engine_source_untrusted']
     for row in rows[:5]:
         row.note = 'method=unprimed_json_v2 analysis=needs_review'
     env.save(*rows[:5])
