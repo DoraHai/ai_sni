@@ -14,6 +14,15 @@ for(const module of ['seo']){
    capabilities:{ai_planning:{enabled:true,can_generate:true}},allowed_actions:['save_proposal','cancel'],completion_evidence:null};
   try{
    const p=await browser.newPage();p.on('pageerror',e=>errors.push(e.message));await p.setRequestInterception(true);
+   // This synthetic workflow is October 2026. Keep the browser clock in the
+   // same month so the current-month summary assertion survives calendar changes.
+   await p.evaluateOnNewDocument(()=>{
+    const NativeDate=Date,fixtureNow=NativeDate.parse('2026-10-12T04:00:00Z');
+    window.Date=class extends NativeDate{
+     constructor(...args){super(...(args.length?args:[fixtureNow]));}
+     static now(){return fixtureNow;}
+    };
+   });
    const ready=revision=>p.waitForFunction(revision=>document.querySelector('.onsite-detail h3')?.textContent.includes('v'+revision)&&document.querySelector('[data-action=onsite-refresh]')?.disabled===false,{},revision);
    const permissions={'seo.site':'edit','seo.content':'edit','seo.keywords':'edit','geo.assets':'edit','geo.content':'edit'};
    await p.evaluateOnNewDocument(permissions=>{sessionStorage.setItem('sem_auth_v1',JSON.stringify({version:1,token:'fixture-advisor',user:{id:7,tenant_id:null,display_name:'顾问',permissions}}));},permissions);
