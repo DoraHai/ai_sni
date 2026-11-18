@@ -30,8 +30,7 @@ function mentionCell(cell, time, compact = false) {
     Number.isSafeInteger(cell.total) && cell.total > 0 && Number.isSafeInteger(cell.mentioned) &&
     cell.mentioned >= 0 && cell.mentioned <= cell.total;
   const result = valid ? `${cell.mentioned}/${cell.total} · ${percent(cell.percentage)}`
-    : compact && (cell?.status === 'not_configured' || cell?.status === 'failed')
-      ? `未检测（${state(cell.status)}）` : state(Object.hasOwn(states, cell?.status) ? cell.status : 'not_tested');
+    : state(Object.hasOwn(states, cell?.status) ? cell.status : 'not_tested');
   const reasons = cell?.status === 'tested_excluded'
     ? `<p class="geo-footnote">${esc((Array.isArray(cell.excluded_reason_codes) && cell.excluded_reason_codes.length
       ? cell.excluded_reason_codes : ['unknown']).map(geoExcludedReason).join('；'))}</p>` : '';

@@ -50,6 +50,12 @@ test('flat question rows preserve six canonical columns, observed zero, missing 
   assert.equal((noSamples.match(/<strong>未检测<\/strong>/g) || []).length, 6);
   assert(!noSamples.includes('0%'));
   assert.match(geoQuestionTable({items: []}, geoTime), /colspan="9"/);
+  const failures = geoQuestionTable({items: [{...question, by_engine: [
+    {engine_key: 'kimi', status: 'failed'}, {engine_key: 'wenxin', status: 'not_configured'},
+  ]}]}, geoTime);
+  assert.match(failures, /data-engine="kimi"><strong>检测失败<\/strong>/);
+  assert.match(failures, /data-engine="wenxin"><strong>未配置<\/strong>/);
+  assert(!failures.includes('未检测（检测失败）'));
 });
 test('combined filter keeps all keyword choices available when changing business and caps search at backend limit', () => {
   const html = geoQuestionFilters({options: {businesses: [], units: [
