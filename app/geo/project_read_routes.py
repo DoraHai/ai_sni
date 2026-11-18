@@ -256,6 +256,11 @@ async def project_response(resource, request, ctx, session):
                           'executions_path': f"/api/v1/geo/projects/{records.project.id}/executions?tenant_id={records.project.tenant_id}"}}
     if resource in {'overview', 'visibility', 'summary', 'questions', 'question'}:
         data['open_week_progress'] = records.open_week_progress
+    if resource == 'overview':
+        from app.geo.project_demo import load_demo_batch
+        demo = await load_demo_batch(session, records)
+        if demo is not None:
+            data['demo_batch'] = demo
     return view.envelope(records, params, data, resource_basis)
 
 
