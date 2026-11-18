@@ -1,17 +1,20 @@
 // Synthetic local fixture only. Never imported by production code.
 import {demoToken, demoEngines} from '../js/geo-project-demo.mjs';
-export function demoFixture() {
+export function demoFixture({mention = ({qid, engineIndex, day}) =>
+  (qid + engineIndex + day) % 13 === 0 ? null : (qid + engineIndex * 2 + day) % 11 < 4} = {}) {
   let id = 10000;
   const counts = (samples) => {
     const mentioned = samples.filter((s) => s.mentioned === true).length;
-    return {sample_count: samples.length, mentioned_count: mentioned, unknown_mention_count: 0,
+    return {sample_count: samples.length, mentioned_count: mentioned,
+      unknown_mention_count: samples.filter((s) => s.mentioned === null).length,
       mention_rate: Math.round(1000000 * mentioned / samples.length) / 10000};
   };
   const group = (ids, probe) => {
     const questions = ids.map((qid) => ({id: qid, unit_id: qid < 85 ? 20 : 19, is_brand_probe: probe,
-      question: `合成夹具问题 ${qid} <script>`, by_engine: demoEngines.map(([engine_key]) => {
+      question: `合成夹具问题 ${qid} <script>`, by_engine: demoEngines.map(([engine_key], engineIndex) => {
         const samples = Array.from({length: 30}, (_, day) => ({snapshot_id: ++id,
-          captured_at: new Date(Date.UTC(2026, 9, 19, 16) + day * 86400000).toISOString(), mentioned: day % 3 === 0}));
+          captured_at: new Date(Date.UTC(2026, 9, 19, 16) + day * 86400000).toISOString(),
+          mentioned: mention({qid, engineIndex, day})}));
         return {engine_key, ...counts(samples), samples};
       })}));
     return {status: 'available', ...counts(questions.flatMap((q) => q.by_engine.flatMap((c) => c.samples))), questions};

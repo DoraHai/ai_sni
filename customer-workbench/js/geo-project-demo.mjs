@@ -69,15 +69,55 @@ export function demoProjection(value) {
 }
 
 const counts = (c) => `${c.mentioned_count}/${c.sample_count} · ${c.mention_rate.toFixed(1)}%`;
+const beijingDay = (at) => new Date(Date.parse(at) + 8 * 3600000).toISOString().slice(0, 10);
+const sampleCounts = (samples) => {
+  const mentioned = samples.filter((s) => s.mentioned === true).length;
+  return {sample_count: samples.length, mentioned_count: mentioned,
+    unknown_mention_count: samples.filter((s) => s.mentioned === null).length,
+    mention_rate: samples.length ? 100 * mentioned / samples.length : null};
+};
+
+// Only consume the validated saved-sample projection. No formal cohort, vendor
+// calls, inferred flags, missing-day filling or production-count constants.
+export function demoOverview(value) {
+  const d = demoProjection(value);
+  if (!d || d.status !== 'available') return d;
+  const group = (g) => {
+    if (g.status !== 'available') return g;
+    const samples = g.questions.flatMap((q) => q.by_engine.flatMap((c) => c.samples));
+    const days = new Map();
+    for (const s of samples) {
+      const day = beijingDay(s.captured_at);
+      if (!days.has(day)) days.set(day, []);
+      days.get(day).push(s);
+    }
+    return {...sampleCounts(samples), status: 'available',
+      daily: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => ({date, ...sampleCounts(rows)})),
+      engines: demoEngines.map(([engine_key]) => ({engine_key,
+        ...sampleCounts(g.questions.flatMap((q) => q.by_engine.find((c) => c.engine_key === engine_key).samples))}))};
+  };
+  return {...d, ordinary: group(d.ordinary), brand_probe: group(d.brand_probe)};
+}
+
+const rate = (c) => c.mention_rate === null ? '无样本' : `${c.mention_rate.toFixed(1)}%`;
+function demoCharts(g, selectedDay) {
+  if (g.status !== 'available') return `<p role="status">普通问题统计不可用：${esc(reasons[g.reason_code])}。不生成趋势或引擎对比。</p>`;
+  const days = g.daily, selected = days.find((d) => d.date === selectedDay) || days.at(-1);
+  const x = (i) => 46 + i * 564 / Math.max(1, days.length - 1), y = (r) => 146 - r * 1.2;
+  const describe = (d) => `${d.date}：${counts(d)}；未判定 ${d.unknown_mention_count} 条`;
+  return `<div class="geo-demo-charts"><figure aria-label="普通问题每日模拟提及率"><figcaption>每日模拟提及率 <small>普通问题 · 北京时间 · 纵轴 0–100%</small></figcaption><svg viewBox="0 0 640 174" role="img" aria-label="普通问题每日模拟提及率，来自已保存快照；下方可选择日期查看数值"><title>普通问题每日模拟提及率；品牌点名题不参与</title>${[0, 50, 100].map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}<polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5"/>${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d.date === selected.date ? 5 : 3}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}<text x="46" y="170">${days[0].date.slice(5)}</text><text x="610" y="170" text-anchor="end">${days.at(-1).date.slice(5)}</text></svg><label class="geo-demo-day">查看日期 <select data-geo-demo-day aria-label="查看趋势日期">${days.map((d) => `<option value="${d.date}" ${d.date === selected.date ? 'selected' : ''}>${d.date}</option>`).join('')}</select></label><p class="geo-demo-day-value" aria-live="polite">${esc(describe(selected))}</p></figure><figure aria-label="普通问题每引擎模拟提及率"><figcaption>模型接口类别对比 <small>普通问题 · 模拟提及 / 已保存样本</small></figcaption><div class="geo-demo-engine-bars">${g.engines.map((c, i) => `<div data-demo-comparison="${c.engine_key}"><span>${demoEngines[i][1]}</span><span class="geo-demo-track" aria-hidden="true"><i style="width:${c.mention_rate}%"></i></span><strong>${rate(c)}</strong><small>${c.mentioned_count}/${c.sample_count} · 未判定 ${c.unknown_mention_count}</small></div>`).join('')}</div></figure></div>`;
+}
 const time = (s) => new Date(s).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false});
-export function geoDemoArea(value, filter = {}) {
+export function geoDemoArea(value, filter = {}, {expanded = false, selectedDay = null} = {}) {
   const d = demoProjection(value);
   if (d === null) return '';
-  const title = '<h2>已核模拟演示批次 · 八引擎</h2><p class="geo-demo-warning" role="note"><strong>演示数据，不代表真实引擎检测或实际效果</strong></p>';
+  const title = '<h2>GEO 演示概览</h2><p class="geo-demo-warning" role="note"><strong>演示数据，不代表真实引擎检测或实际效果</strong></p>';
   if (d.status !== 'available') return `<section class="geo-demo" aria-label="独立模拟演示区域">${title}<p role="status">演示批次不可用：${esc(reasons[d.reason_code] || '批次响应尚未提供或未通过校验')}。无替代数据。</p></section>`;
-  const summary = (name, g) => `<article><h3>${name}</h3>${g.status === 'available'
-    ? `<strong>${counts(g)}</strong><p>提及回答数 / 本批模拟样本数；未判定 ${g.unknown_mention_count} 条。</p>`
-    : `<p>${esc(reasons[g.reason_code])}</p>`}</article>`;
+  const overview = demoOverview(value), ordinary = overview.ordinary, probe = overview.brand_probe;
+  const ordinaryMetrics = ordinary.status === 'available'
+    ? `<article><h3>普通问题 · 模拟提及回答</h3><strong>${ordinary.mentioned_count}<small> / ${ordinary.sample_count}</small></strong><p>提及回答 / 已保存模拟样本</p></article><article><h3>普通问题 · 模拟提及率</h3><strong>${rate(ordinary)}</strong><p>排除题 85；未判定 ${ordinary.unknown_mention_count} 条仍计分母</p></article>`
+    : `<article><h3>普通问题统计</h3><p>${esc(reasons[ordinary.reason_code])}</p></article>`;
+  const probeMetric = `<article class="geo-demo-probe"><h3>品牌点名题 85 · 独立统计</h3>${probe.status === 'available' ? `<strong>${rate(probe)}</strong><p>${probe.mentioned_count}/${probe.sample_count}；未判定 ${probe.unknown_mention_count} 条</p>` : `<p>${esc(reasons[probe.reason_code])}</p>`}<small>不参与普通问题概览、趋势与对比</small></article>`;
   const groups = [['ordinary', '普通问题（排除题 85）', d.ordinary], ['brand_probe', '品牌点名题（题 85，单独汇总）', d.brand_probe]];
   const query = String(filter.q || '').trim().toLocaleLowerCase();
   const tables = groups.filter(([kind]) => !filter.kind || filter.kind === kind).map(([, name, g]) => {
@@ -85,5 +125,5 @@ export function geoDemoArea(value, filter = {}) {
     const questions = g.questions.filter((q) => !query || `${q.id} ${q.question}`.toLocaleLowerCase().includes(query));
     return `<div class="geo-question-scroll" role="region" aria-label="${name}八引擎演示表" tabindex="0"><table class="geo-question-table"><caption>${name} · 模拟演示八引擎 · X/Y = 提及回答数/本批模拟样本数</caption><thead><tr><th scope="col">问题</th>${demoEngines.map(([, name]) => `<th scope="col">${name}</th>`).join('')}</tr></thead><tbody>${questions.map((q) => `<tr><th scope="row">#${q.id} ${esc(q.question)}</th>${q.by_engine.map((c) => `<td data-demo-engine="${c.engine_key}"><strong>${counts(c)}</strong><details><summary>模拟样本依据（${c.sample_count} 条）</summary><p>本批已保存快照；时间均为北京时间。</p><ul>${c.samples.map((s) => `<li>#${s.snapshot_id} · ${esc(time(s.captured_at))} · ${s.mentioned === null ? '提及未判定' : s.mentioned ? '标记为提及' : '标记为未提及'}</li>`).join('')}</ul></details></td>`).join('')}</tr>`).join('') || '<tr><td colspan="9">当前筛选无匹配问题。</td></tr>'}</tbody></table></div>`;
   }).join('');
-  return `<section class="geo-demo" aria-label="独立模拟演示区域">${title}<p>批次 <code>${demoToken}</code>；实际保存 <strong>${d.saved_sample_count}</strong> 条模拟样本。</p><p>统计日期：${d.period.start_date} 至 ${d.period.end_date}（北京时间）；此批次日期固定，独立于正式周筛选。</p><div class="geo-metrics">${summary('普通问题模拟提及率（排除题 85）', d.ordinary)}${summary('品牌点名模拟提及率（题 85）', d.brand_probe)}</div><p>仅按已保存记录 mentions_brand=true 计提及，每条回答计一次；未判定仍计入本批模拟样本分母。混元模型接口类别；不代表元宝产品端实际检测。其他（演示类别）不对应实际供应商检测。</p><form data-geo-demo><label>演示问题类型 <select name="kind"><option value="">全部</option><option value="ordinary" ${filter.kind === 'ordinary' ? 'selected' : ''}>普通问题</option><option value="brand_probe" ${filter.kind === 'brand_probe' ? 'selected' : ''}>品牌点名</option></select></label><label>演示问题文字或编号 <input name="q" maxlength="100" value="${esc(filter.q || '')}"></label><button>筛选演示问题</button></form><p>筛选只缩小下表；上方汇总始终为整个批次。</p>${tables}<details><summary>演示批次依据</summary><p>当前项目绑定 + note 独立批次 token；逐条核验 simulated=true、sample_mode=mock_persona、无巡检关联、note 含“模拟演示”，题×引擎×北京时间日网格完整且无重复。单元格列出本批快照编号、保存时间与提及标记。</p><p>批次摘要：${esc(d.basis.fingerprint)}</p><p>演示不生成正式可见度分数或引用证据；正式六引擎表与正式指标仍通过下方 GEO工作、数据入口独立展示。</p></details></section>`;
+  return `<section class="geo-demo" aria-label="独立模拟演示区域">${title}<p class="geo-demo-period">统计日期：${d.period.start_date} 至 ${d.period.end_date}（北京时间） · 已保存 ${d.saved_sample_count} 条模拟样本</p><div class="geo-demo-stats">${ordinaryMetrics}${probeMetric}</div>${demoCharts(ordinary, selectedDay)}<p class="geo-demo-method">每条已保存回答计一次，mentions_brand=true 计提及；未判定仍计分母。${value.data?.project?.canonical_domain ? '本视图仅展示模拟样本统计，不计算正式可见度。' : '项目尚未配置自有域名；本视图只展示模拟样本统计，不计算正式可见度。'}</p><p class="geo-demo-model-note">混元模型接口类别；不代表元宝产品端实际检测。其他（演示类别）不对应实际供应商检测。</p><details data-geo-demo-details ${expanded ? 'open' : ''}><summary data-geo="demo-details">问题与样本依据 · 展开查看八引擎网格、筛选与批次校验</summary><p>批次 <code>${demoToken}</code>；实际保存 <strong>${d.saved_sample_count}</strong> 条模拟样本。统计日期独立于正式周筛选；正式问题表及原筛选可通过上方“正式模式”访问。</p><form data-geo-demo><label>演示问题类型 <select name="kind"><option value="">全部</option><option value="ordinary" ${filter.kind === 'ordinary' ? 'selected' : ''}>普通问题</option><option value="brand_probe" ${filter.kind === 'brand_probe' ? 'selected' : ''}>品牌点名</option></select></label><label>演示问题文字或编号 <input name="q" maxlength="100" value="${esc(filter.q || '')}"></label><button>筛选演示问题</button></form><p>筛选只缩小下表；上方汇总始终为整个批次。</p>${tables}<details><summary>演示批次依据</summary><p>当前项目绑定 + note 独立批次 token；逐条核验 simulated=true、sample_mode=mock_persona、无巡检关联、note 含“模拟演示”，题×引擎×北京时间日网格完整且无重复。单元格列出本批快照编号、保存时间与提及标记。</p><p>批次摘要：${esc(d.basis.fingerprint)}</p><p>演示不生成正式可见度分数或引用证据；正式六引擎表与正式指标通过“正式模式”独立展示。</p></details></details></section>`;
 }

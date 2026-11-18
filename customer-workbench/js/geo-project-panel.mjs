@@ -16,7 +16,8 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     history = [],
     actionError = null,
     downloading = false;
-  let demoFilter = {};
+  let demoFilter = {}, view = 'demo', demoExpanded = false, demoDay = null;
+  const demoView = () => isDemoProject(host.getContext()) && view === 'demo';
   const available = (key) => !!slots[key]?.value;
   function tabs() {
     return geoTabs.filter(
@@ -34,6 +35,14 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   }
   function paint() {
     if (!node) return;
+    const context = host.getContext();
+    const mode = isDemoProject(context) ? `<nav class="geo-view-modes" aria-label="GEO 数据模式"><button data-geo="mode" data-view="demo" aria-pressed="${demoView()}">演示模式</button><button data-geo="mode" data-view="formal" aria-pressed="${!demoView()}">正式模式</button></nav>` : '';
+    if (demoView()) {
+      node.innerHTML = mode + geoDemoArea(slots.overview?.value || {tenant_id: context.tenantId,
+        project_id: context.projectId, read_only: true}, demoFilter, {expanded: demoExpanded, selectedDay: demoDay}) +
+        `<button data-geo="refresh">重新读取演示概览</button>${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}`;
+      return;
+    }
     const slot = active?.slot;
     let body =
       tab === 'home'
@@ -68,10 +77,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       tab === 'data'
         ? `<form data-geo-week><label>统计周期结束后的周一（北京时间） <input name="week_end" type="date" value="${esc(week || '')}" required></label><button>查看该周</button></form><p>正式指标来自已保存检测结果，历史按当前项目归属重算。</p><button data-geo="read" data-resource="visibility">AI 可见度概览</button><button data-geo="read" data-resource="questions">问题监测</button><button data-geo="read" data-resource="answers">回答证据</button><button data-geo="download" data-format="pdf" ${downloading ? 'disabled' : ''}>下载 PDF 报告</button><button data-geo="download" data-format="xlsx" ${downloading ? 'disabled' : ''}>下载 Excel 报告</button>${downloading ? '<p role="status">正在读取报告…</p>' : ''}`
         : '';
-    const context = host.getContext();
-    const demo = isDemoProject(context) && ['home', 'work', 'data'].includes(tab)
-      ? geoDemoArea(slots.overview?.value || {tenant_id: context.tenantId, project_id: context.projectId, read_only: true}, demoFilter) : '';
-    node.innerHTML = `${demo}<nav class="geo-tabs" aria-label="GEO 工作台">${tabs()
+    node.innerHTML = `${mode}<nav class="geo-tabs" aria-label="GEO 工作台">${tabs()
       .map(
         ([key, name]) =>
           `<button data-geo="tab" data-tab="${key}" ${key === tab ? 'aria-current="page"' : ''}>${name}</button>`,
@@ -142,11 +148,12 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       ['questions', 'content', 'deliveries', 'summary', 'article-citations', 'recommendations'].map((r) => readSlot(r, paramsFor(r, {}))),
     );
     if (disposed || stamp !== epoch) return;
-    if (tab !== 'home' && tab !== 'onsite' && tab !== 'plan' && tab !== 'progress')
+    if (!demoView() && tab !== 'home' && tab !== 'onsite' && tab !== 'plan' && tab !== 'progress')
       await selectTab(tab);
   }
   function reset() {
     demoFilter = {};
+    view = 'demo'; demoExpanded = false; demoDay = null;
     epoch++;
     client.invalidate();
     slots = {};
@@ -178,6 +185,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   }
   async function selectTab(next) {
     if (!geoTabs.some(([key]) => key === next)) return;
+    view = 'formal';
     tab = next;
     active = null;
     history = [];
@@ -236,6 +244,18 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     if (!el || el.disabled || !canNavigate()) return;
     actionError = null;
     const action = el.dataset.geo;
+    if (action === 'demo-details') {
+      event.preventDefault();
+      demoExpanded = !demoExpanded;
+      paint();
+      return;
+    }
+    if (action === 'mode' && isDemoProject(host.getContext()) && ['demo', 'formal'].includes(el.dataset.view)) {
+      view = el.dataset.view;
+      paint();
+      onNavigate(tab);
+      return;
+    }
     if (action === 'tab') await selectTab(el.dataset.tab);
     if (action === 'read') {
       let params = {};
@@ -294,6 +314,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       event.preventDefault();
       if (!canNavigate()) return;
       demoFilter = {kind: form.elements.kind.value, q: form.elements.q.value.trim()};
+      demoExpanded = true;
       paint();
       return;
     }
@@ -322,11 +343,18 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     reset,
     showOnsite: () => selectTab('onsite'),
     getTab: () => tab,
+    isDemoView: demoView,
     renderInto(element) {
       node = element;
       node.onclick = click;
       node.onsubmit = submit;
       node.onchange = (event) => {
+        if (event.target.matches('[data-geo-demo-day]')) {
+          demoDay = event.target.value;
+          paint();
+          node.querySelector('[data-geo-demo-day]')?.focus({preventScroll: true});
+          return;
+        }
         if (event.target.name !== 'business_id') return;
         const form = event.target.closest('[data-geo-questions]');
         if (!form) return;
