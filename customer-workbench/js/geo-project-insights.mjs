@@ -31,9 +31,10 @@ function mentionCell(cell, time, compact = false) {
     cell.mentioned >= 0 && cell.mentioned <= cell.total;
   const result = valid ? `${cell.mentioned}/${cell.total} · ${percent(cell.percentage)}`
     : state(Object.hasOwn(states, cell?.status) ? cell.status : 'not_tested');
-  const reasons = cell?.status === 'tested_excluded'
-    ? `<p class="geo-footnote">${esc((Array.isArray(cell.excluded_reason_codes) && cell.excluded_reason_codes.length
-      ? cell.excluded_reason_codes : ['unknown']).map(geoExcludedReason).join('；'))}</p>` : '';
+  const exclusionCodes = cell?.status === 'tested_excluded' ? cell.excluded_reason_codes : cell?.saved_exclusion_reason_codes;
+  const reasons = cell?.status === 'tested_excluded' || (Array.isArray(exclusionCodes) && exclusionCodes.length)
+    ? `<p class="geo-footnote">已保存回答未计入原因：${esc((Array.isArray(exclusionCodes) && exclusionCodes.length
+      ? exclusionCodes : ['unknown']).map(geoExcludedReason).join('；'))}</p>` : '';
   const sample = valid && (cell.small_sample || cell.total < 3) ? '<small>小样本，结果仅供参考</small>' : '';
   const savedCount = Number.isSafeInteger(cell?.saved_count) ? `<small>本正式周已保存 ${integer(cell.saved_count)} 条回答</small>` : '';
   const saved = `${savedCount}<small>样本时间：${esc(cell?.last_sample_at ? time(cell.last_sample_at) : '暂无')}</small>${reasons}`;
