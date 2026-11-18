@@ -260,9 +260,30 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       return;
     }
     if (action === 'mode' && isDemoProject(host.getContext()) && ['demo', 'formal'].includes(el.dataset.view)) {
-      view = el.dataset.view;
+      const nextView = el.dataset.view;
+      if (nextView === view) return;
+      const previousSwitch = node.querySelector?.('.geo-view-modes');
+      const start = nextView === 'formal' ? previousSwitch?.getBoundingClientRect() : null;
+      const hadFocus = el.ownerDocument?.activeElement === el;
+      view = nextView;
       paint();
       onNavigate(tab);
+
+      // The mode change can replace the entire workbench. Animate its new switch
+      // from the old position after the destination layout is in the DOM.
+      const modeSwitch = node.querySelector?.('.geo-view-modes');
+      if (hadFocus) modeSwitch?.querySelector('[aria-pressed="true"]')?.focus({preventScroll: true});
+      if (start && modeSwitch?.animate &&
+          !modeSwitch.ownerDocument.defaultView?.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        const end = modeSwitch.getBoundingClientRect();
+        const dx = start.left - end.left;
+        if (dx < -16) {
+          modeSwitch.animate([
+            {transform: `translate(${dx}px, ${start.top - end.top}px)`},
+            {transform: 'translate(0, 0)'},
+          ], {duration: 520, easing: 'cubic-bezier(0.22, 1, 0.36, 1)'});
+        }
+      }
       return;
     }
     if (action === 'tab') await selectTab(el.dataset.tab);

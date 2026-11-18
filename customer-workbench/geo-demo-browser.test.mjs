@@ -107,7 +107,16 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.evaluate(() => scrollTo(0, 0)); await p.click('[data-geo=demo-details]');
     await p.evaluate(() => scrollTo(0, 0)); await screenshot('demo-mobile-first-screen.png');
     await p.setViewport({width: 1440, height: 1000});
-    await p.click('[data-view=formal]');
+    const slide = await p.evaluate(async () => {
+      const before = document.querySelector('.geo-view-modes').getBoundingClientRect().left;
+      document.querySelector('[data-view=formal]').click();
+      const control = document.querySelector('.geo-view-modes');
+      const animation = control.getAnimations()[0];
+      const from = control.getBoundingClientRect().left;
+      await animation?.finished;
+      return {before, from, to: control.getBoundingClientRect().left, animated: !!animation};
+    });
+    assert(slide.animated && Math.abs(slide.before - slide.from) < 2 && slide.to > slide.from + 100);
     assert.equal(await p.$('.geo-workspace .geo-demo, .geo-demo-charts'), null);
     assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /本期要点[\s\S]*GEO 优化概览[\s\S]*AI 提及率/);
     assert(!/暂不可计算|合格回答|真实 API 回答|数据范围与依据/.test(await p.$eval('.geo-workspace', (e) => e.innerText)));
@@ -142,6 +151,11 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
       await screenshot(`formal-${tab}.png`);
     }
     await p.click('[data-view=demo]');
+    await p.emulateMediaFeatures([{name: 'prefers-reduced-motion', value: 'reduce'}]);
+    await p.$eval('[data-view=formal]', (button) => button.click());
+    assert.equal(await p.$eval('.geo-view-modes', (control) => control.getAnimations().length), 0);
+    await p.click('[data-view=demo]');
+    await p.emulateMediaFeatures(null);
     for (const state of ['zero', 'unknown']) {
       chartState = state; await p.click('[data-geo=refresh]'); await p.waitForNetworkIdle({idleTime: 200});
       assert.equal(await p.$$eval('[data-demo-comparison] strong', (n) => n.every((e) => e.textContent === '0.0%')), true);

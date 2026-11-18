@@ -34,6 +34,8 @@
 [data-geo-workspace]:has(> .geo-workspace--formal) > .geo-view-modes {
   grid-column: 2;
   grid-row: 1;
+  position: relative;
+  z-index: 1;
   gap: 3px;
   padding: 3px;
   background: var(--formal-wash);
