@@ -54,6 +54,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
         if (r === 'executions') v.project_id = pid;
         else { v.tenant_id = 15; v.project_id = pid; }
         if (r === 'overview') v.data.project.canonical_domain = '';
+        if (r === 'questions') v.data.options = {businesses: [{id: 2, name: '合成业务甲'}, {id: 3, name: '合成业务乙'}], units: [{id: 20, business_id: 2, display_name: '合成关键词甲'}, {id: 19, business_id: 3, display_name: '合成关键词乙'}]};
         if (r === 'overview') v.data.demo_batch = missing
           ? {batch_token: demoFixture().data.demo_batch.batch_token, status: 'unavailable', reason_code: 'batch_missing'}
           : batch().data.demo_batch;
@@ -107,17 +108,37 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.evaluate(() => scrollTo(0, 0)); await screenshot('demo-mobile-first-screen.png');
     await p.setViewport({width: 1440, height: 1000});
     await p.click('[data-view=formal]');
-    assert.equal(await p.$('.geo-demo'), null);
-    assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /暂不可计算/);
-    assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /最低要求 8 \/ 3 \/ 2/);
-    assert(await p.$('.geo-tabs [data-tab=plan]')); assert(await p.$('.geo-tabs [data-tab=deliveries]'));
+    assert(await p.$('.geo-demo'));
+    assert(!/暂不可计算|合格回答|真实 API 回答|数据范围与依据/.test(await p.$eval('.geo-workspace', (e) => e.innerText)));
+    assert.equal(await p.$('.geo-tabs [data-tab=plan]'), null);
+    assert.equal(await p.$('.geo-tabs [data-tab=deliveries]'), null);
+    assert.equal(await p.$('.geo-tabs [data-all-questions]'), null);
+    assert.equal(await p.$eval('[data-search-visibility]', (e) => e.hidden), true);
     await screenshot('formal-first-screen.png');
-    await p.click('.geo-tabs [data-resource=questions]');
+    await p.click('.geo-tabs [data-tab=work]');
     await p.waitForSelector('[data-geo-questions]');
-    assert.equal(await p.$$eval('.geo-workspace .geo-question-table thead th', (n) => n.length), 9);
-    assert.match(await p.$eval('.geo-workspace .geo-question-table caption', (e) => e.textContent), /正式六引擎/);
-    assert.equal(await p.$('[data-demo-engine]'), null);
+    assert.equal(await p.$$eval('.geo-demo-work .geo-question-table thead th', (n) => n.length), 22);
+    assert.equal(await p.$$eval('.geo-demo-work [data-demo-engine]', (n) => n.length), 56);
     await screenshot('formal-question-filters.png', true);
+    await p.select('[data-geo-questions] [name=business_id]', '2');
+    await p.$eval('[data-geo-questions]', (e) => e.requestSubmit());
+    await p.waitForNetworkIdle({idleTime: 200});
+    assert.equal(await p.$$eval('.geo-demo-work [data-demo-engine]', (n) => n.length), 16);
+    assert.equal(await p.$eval('[data-tab=work]', (e) => e.getAttribute('aria-current')), 'page');
+    await p.click('[data-geo=clear-filters]');
+    await p.waitForNetworkIdle({idleTime: 200});
+    assert.equal(await p.$$eval('.geo-demo-work [data-demo-engine]', (n) => n.length), 56);
+    await p.$eval('.geo-demo-work [data-demo-engine] details', (e) => e.open = true);
+    assert.match(await p.$eval('.geo-demo-work [data-demo-engine] details', (e) => e.innerText), /#10001/);
+    await screenshot('formal-sample-evidence.png', true);
+    for (const tab of ['home', 'progress', 'onsite', 'data', 'content']) {
+      if (!await p.$(`.geo-tabs [data-tab=${tab}]`)) continue;
+      await p.click(`.geo-tabs [data-tab=${tab}]`);
+      await p.waitForNetworkIdle({idleTime: 200});
+      assert(!await p.$eval('.geo-workspace', (e) => e.innerText.includes('数据范围与依据')));
+      assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /演示数据，不代表真实引擎检测或实际效果/);
+      await screenshot(`formal-${tab}.png`);
+    }
     await p.click('[data-view=demo]');
     for (const state of ['zero', 'unknown']) {
       chartState = state; await p.click('[data-geo=refresh]'); await p.waitForNetworkIdle({idleTime: 200});
@@ -137,6 +158,10 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=15&project_id=4');
     await p.waitForNetworkIdle({idleTime: 200}); assert.equal(await p.$('.geo-demo'), null);
     assert.equal(await p.$('[data-view=demo]'), null);
+    assert(await p.$('.geo-tabs [data-tab=plan]'));
+    assert(await p.$('.geo-tabs [data-tab=deliveries]'));
+    assert(await p.$('.geo-basis'));
+    assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /暂不可计算/);
     assert(!await p.evaluate(() => document.body.innerText.includes('geo-demo-t15-p3')));
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=16&project_id=3');
     await p.waitForNetworkIdle({idleTime: 200}); assert.equal(await p.$('.geo-demo'), null);

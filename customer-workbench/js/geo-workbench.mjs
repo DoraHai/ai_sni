@@ -1,5 +1,6 @@
 import {escapeText as esc} from './customer-display.mjs';
 import {createSearchVisibilityPanel} from './search-visibility-panel.mjs';
+import {isDemoProject} from './geo-project-demo.mjs';
 import {createGeoProjectPanel} from './geo-project-panel.mjs';
 
 export function mountGeoWorkbench({root, host, logout, initialOnsiteTaskId = null, selectSpaceHref = '/customer-workbench/'}) {
@@ -13,7 +14,7 @@ export function mountGeoWorkbench({root, host, logout, initialOnsiteTaskId = nul
     if (identity) {
       project.renderInto(root.querySelector('[data-geo-workspace]'));
       const container = root.querySelector('[data-search-visibility]');
-      container.hidden = project.isDemoView() || !['home', 'data'].includes(project.getTab());
+      container.hidden = isDemoProject(host.getContext()) || project.isDemoView() || !['home', 'data'].includes(project.getTab());
       visibility.renderInto(container);
     }
   }
