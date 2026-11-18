@@ -15,6 +15,8 @@ const canAssignAdvisor = () => !!session.user?.id && session.user.tenant_id == n
 const labels = { baseline: '保留修改前证据', content: '准备内容任务', materials: '补齐创作要求与事实',
   article: '制作内容', review: '确认当前内容版本', publication: '发布与回填', retest: '同题复测',
   comparison: '核对前后变化', acceptance: '顾问验收' }
+const preparationLabels = { no_project_questions: '当前项目暂无可用问题', no_plan_questions: '计划尚未选择问题',
+  project_scope_changed: '计划问题与当前项目链不一致', advisor_assignment_unavailable: '负责顾问资格不可用', project_paused: '项目已暂停' }
 let generation = 0
 async function load() {
   const current = ++generation
@@ -59,6 +61,10 @@ onBeforeUnmount(() => { generation++ })
       <el-alert v-if="data.effective_pause" title="当前项目或服务计划已暂停" type="warning" :closable="false" />
       <el-alert v-if="data.blocker" title="项目计划需要顾问核对业务归属或分配权限" type="warning" :closable="false" />
       <h3>服务计划</h3>
+      <p>已保存版本 {{ data.service_plan.revision }}；开关：{{ data.service_plan.enabled ? '已开启' : '未开启' }}；计划状态：{{ data.service_plan.status === 'active' ? '活动' : '暂停' }}；已选问题 {{ data.service_plan.prompt_ids.length }} 个。状态 active 与开关 enabled 分别判断。</p>
+      <p>准备状态：{{ data.preparation?.status === 'ready' ? '已准备' : data.preparation ? '尚未准备完成' : '待核对' }}；当前项目链问题 {{ data.preparation?.project_prompt_count ?? '未知' }} 个。</p>
+      <ul><li v-for="code in data.preparation?.reason_codes || []" :key="code">{{ preparationLabels[code] || '准备情况需核对' }}</li></ul>
+      <p>办理分工：顾问核对项目业务、目标问题和当前稿件，平台配置管理员办理计划保存与启停；客户页面保持只读。开启周期待办不代表已完成模型检测，实际检测受账号、额度和调度能力约束。</p>
       <el-form v-if="canAssignAdvisor() && session.canEdit('geo.content') && session.canEdit('geo.assets')" label-width="110px">
         <el-form-item label="周期待办"><el-switch v-model="form.enabled" :disabled="saving" /></el-form-item>
         <el-form-item label="计划状态"><el-select v-model="form.status" :disabled="saving"><el-option label="运行" value="active" /><el-option label="暂停" value="paused" /></el-select></el-form-item>

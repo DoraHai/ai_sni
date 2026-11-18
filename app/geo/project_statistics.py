@@ -54,8 +54,11 @@ def question_cells(prompt_id, records, end, qualified=None):
         selected = [r for r in rows if r.prompt_id == prompt_id and r.engine == engine]
         x, y = sum(r.mentions_brand is True for r in selected), len(selected)
         state = 'small_sample' if 0 < y < 3 else 'observed' if y else 'not_tested'
-        excluded = []
-        last_sample_at = view.latest_time(r.captured_at for r in selected)
+        saved = [r for r in view.week_rows(records.answers, end) if r.prompt_id == prompt_id and r.engine == engine]
+        excluded = list(dict.fromkeys(code for r in saved for code in view.qualification(r, records)))
+        if saved and not y:
+            state = 'tested_excluded'
+        last_sample_at = view.latest_time(r.captured_at for r in saved)
         if not y:
             from datetime import timedelta
             start = shanghai_day_bounds_utc_naive(end - timedelta(days=7))[0]
@@ -63,7 +66,7 @@ def question_cells(prompt_id, records, end, qualified=None):
             attempts = [(to_utc_naive(run.finished_at or run.started_at), run.id, c) for run in records.runs.values()
                         if run.started_at and start <= to_utc_naive(run.started_at) < stop
                         for c in run.items or [] if c.get('prompt_id') == prompt_id and c.get('engine') == engine]
-            if attempts:
+            if attempts and not saved:
                 _, _, cell = max(attempts, key=lambda attempt: attempt[:2])
                 reason = str(cell.get('skipped_reason') or '')
                 if reason in {'skipped:real_only_no_platform_key', 'skipped:prefer_real_no_platform_key',
@@ -79,7 +82,7 @@ def question_cells(prompt_id, records, end, qualified=None):
                         state = 'tested_excluded'
                         last_sample_at = view.iso(answer.captured_at) if answer else None
         results.append({'engine_key': engine, 'label': label, 'mentioned': x if y else None,
-                        'total': y or None, 'percentage': round(100*x/y, 4) if y else None,
+                        'total': y or None, 'saved_count': len(saved), 'percentage': round(100*x/y, 4) if y else None,
                         'last_sample_at': last_sample_at, 'excluded_reason_codes': list(dict.fromkeys(excluded)),
                         'status': state, 'small_sample': 0 < y < 3})
     return results
