@@ -15,7 +15,7 @@ export function geoPeriod(period) {
 export function geoOpenWeekProgress(progress) {
   const n = progress?.detected_answer_count;
   if (!Number.isSafeInteger(n) || n < 0) return '';
-  return `<p class="geo-open-week">进行中本周（未结束）：已保存 ${n} 条真实 API 回答${n === 0 ? '，当前范围暂未检测' : ''}。下周一结束本周后，符合正式资格的回答才可计入正式周；保存不等于计入。</p>`;
+  return `<p class="geo-open-week">进行中本周（未结束）：已保存 ${n} 条真实 API 回答（当前非品牌点名范围）。${n === 0 ? '暂无已保存回答；尝试或失败情况请查看逐模型状态。' : ''}下周一结束本周后，符合正式资格的回答才可计入正式周；保存不等于计入。</p>`;
 }
 export function geoQuestionOpenWeek(count) {
   return Number.isSafeInteger(count) && count > 0

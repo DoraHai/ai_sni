@@ -127,7 +127,7 @@ test('all GEO period displays use the same customer-facing inclusive dates', () 
   }
 });
 test('open-week progress handles zero/missing/malformed counts without changing formal metrics', () => {
-  assert.equal(geoOpenWeekProgress({detected_answer_count: 0}), '<p class="geo-open-week">进行中本周（未结束）：已保存 0 条真实 API 回答，当前范围暂未检测。下周一结束本周后，符合正式资格的回答才可计入正式周；保存不等于计入。</p>');
+  assert.equal(geoOpenWeekProgress({detected_answer_count: 0}), '<p class="geo-open-week">进行中本周（未结束）：已保存 0 条真实 API 回答（当前非品牌点名范围）。暂无已保存回答；尝试或失败情况请查看逐模型状态。下周一结束本周后，符合正式资格的回答才可计入正式周；保存不等于计入。</p>');
   for (const n of [undefined, null, -1, 0.5, '26', '<img>', NaN, Infinity]) {
     assert.equal(geoOpenWeekProgress({detected_answer_count: n}), '');
     assert.equal(geoQuestionOpenWeek(n), '');
@@ -148,7 +148,7 @@ test('open-week progress handles zero/missing/malformed counts without changing 
     assert.match(geoResource(resource, value), /进行中本周（未结束）：已保存 26 条真实 API 回答/);
     assert.deepEqual(value.data, formalData);
     value.data.open_week_progress.detected_answer_count = 0;
-    assert.match(geoResource(resource, value), /进行中本周（未结束）：已保存 0 条真实 API 回答，当前范围暂未检测/);
+    assert.match(geoResource(resource, value), /进行中本周（未结束）：已保存 0 条真实 API 回答（当前非品牌点名范围）。暂无已保存回答；尝试或失败情况请查看逐模型状态/);
     delete value.data.open_week_progress;
     if (value.data.question) delete value.data.question.open_week_detected_count;
     for (const q of value.data.items || []) delete q.open_week_detected_count;

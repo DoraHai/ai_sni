@@ -156,7 +156,7 @@ test('built insights: full server filters, six engines, citations, suggestions, 
     openCount = 0;
     await p.click('[data-tab=home]'); await p.click('[data-geo=refresh]');
     await p.waitForNetworkIdle({idleTime: 200});
-    assert.match(await p.$eval('.geo-open-week', (e) => e.textContent), /进行中本周（未结束）：已保存 0 条真实 API 回答，当前范围暂未检测/);
+    assert.match(await p.$eval('.geo-open-week', (e) => e.textContent), /进行中本周（未结束）：已保存 0 条真实 API 回答（当前非品牌点名范围）。暂无已保存回答；尝试或失败情况请查看逐模型状态/);
     legacy = true;
     await p.click('[data-geo=refresh]');
     await p.waitForNetworkIdle({idleTime: 200});
