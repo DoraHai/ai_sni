@@ -278,10 +278,19 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
         const end = modeSwitch.getBoundingClientRect();
         const dx = start.left - end.left;
         if (dx < -16) {
+          const dy = start.top - end.top;
+          const timing = {duration: 640};
+          // Keep horizontal travel continuous while lift and shadow rise and fall.
           modeSwitch.animate([
-            {transform: `translate(${dx}px, ${start.top - end.top}px)`},
-            {transform: 'translate(0, 0)'},
-          ], {duration: 520, easing: 'cubic-bezier(0.22, 1, 0.36, 1)'});
+            {translate: `${dx}px ${dy}px`},
+            {translate: '0 0'},
+          ], {...timing, easing: 'cubic-bezier(0.45, 0, 0.18, 1)'});
+          modeSwitch.animate([
+            {transform: 'translateY(0) scale(1)', boxShadow: '0 0 0 #14594c00', easing: 'ease-out'},
+            {transform: 'translateY(-7px) scale(1.035)', boxShadow: '0 8px 20px #14594c30',
+              offset: 0.38, easing: 'cubic-bezier(0.3, 0, 0.2, 1)'},
+            {transform: 'translateY(0) scale(1)', boxShadow: '0 0 0 #14594c00'},
+          ], timing);
         }
       }
       return;
