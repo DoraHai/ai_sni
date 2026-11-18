@@ -195,23 +195,25 @@ export function geoServiceLine(ex) {
   if (ex.service_plan?.enabled !== true) return '服务计划尚未启用';
   return `最近已加载 ${ex.items.length} 项服务任务，已加载任务中 ${ex.items.filter((r) => r.status === 'done').length} 项完成${ex.truncated ? '（仅最近20项）' : ''}`;
 }
-export function geoHome(slots) {
+export function geoHome(slots, simulatedMetrics = null) {
   const a = slots.overview?.value,
     v = a?.data,
     x = slots.executions?.value,
     b = slots.visibility?.value;
-  const weeklyCard = b
+  const weeklyCard = simulatedMetrics ?? (b
     ? geoWeekly(b.data.current, b.data.comparison?.comparable === true) + geoBasis(b)
     : v?.weekly
       ? geoWeekly(v.weekly)
-      : '<p>AI 指标：' + geoStatus(slots.visibility) + '</p>';
+      : '<p>AI 指标：' + geoStatus(slots.visibility) + '</p>');
   const pending = v
     ? `可交付且待确认：${v.content.pending_review_count > 0 ? '有 ' + count(v.content.pending_review_count) + ' 项稿件待客户确认' : '当前无可交付且待确认稿件'}`
     : '待确认稿件' + (slots.overview?.error === 'GEO_NOT_OPEN' ? '暂未开放' : '读取失败');
-  const monitor = v
+  const monitor = simulatedMetrics !== null
+    ? 'GEO 检测数据：查看模拟样本与问题提及情况'
+    : v
     ? `${geoPeriod(v.weekly?.period)}：${v.monitoring.active_nonbrand_question_count === 0 ? '当前项目尚无归属监测问题' : v.monitoring.attention_question_count > 0 ? '本统计周期内有 ' + count(v.monitoring.attention_question_count) + ' 个问题建议查看观测证据' : '该周无上述规则命中的关注问题'}${v.weekly?.sample_status === 'insufficient' ? '；检测数据还不够' : ''}`
     : '监测关注项' + (slots.overview?.error === 'GEO_NOT_OPEN' ? '暂未开放' : '读取失败');
-  return `<h2>本期要点</h2><ul class="geo-highlights"><li>${esc(pending)} ${button('查看', 'content', {review_status: 'pending'})} ${button('问这项工作', 'content', {review_status: 'pending'})}</li><li>${esc(x ? geoServiceLine(x) : geoStatus(slots.executions))} <button data-geo="tab" data-tab="progress">查看</button> <button data-geo="tab" data-tab="plan">问这项工作</button></li><li>${esc(monitor)} ${button('查看', 'questions', {attention: 'needs_attention'})} ${button('问这项工作', 'questions', {attention: 'needs_attention'})}</li></ul><p>“问这项工作”定位到已保存证据与说明。仅列出当前项目链内、当前母稿检查通过的可交付版本；制作中、待修补或尚未提交确认的稿件不会计入待确认。客户确认后仍需安排发布。</p><h2>GEO 优化概览</h2>${v ? `${a.scope.binding_state === 'unbound' ? '<p>当前项目尚未关联业务</p>' : ''}<p>当前可交付内容库存：${count(v.content.active_task_count)} 项任务，${count(v.content.task_count_with_master)} 项已有母稿，${count(v.content.variant_count)} 份渠道稿，${count(v.content.native_published_record_count)} 条原生发布登记。</p>` : `<p>${geoStatus(slots.overview)}</p>`}${geoBasis(a)}${geoOpenWeekProgress(v?.open_week_progress ?? b?.data.open_week_progress)}${weeklyCard}${slots.visibility?.error ? `<p role="status">AI 指标：${geoStatus(slots.visibility)}</p>` : ''}${button('查看 AI 数据', 'visibility')}<p>站内任务：月度计划，与 AI 正式周指标周期不同。</p>`;
+  return `<h2>本期要点</h2><ul class="geo-highlights"><li>${esc(pending)} ${button('查看', 'content', {review_status: 'pending'})} ${button('问这项工作', 'content', {review_status: 'pending'})}</li><li>${esc(x ? geoServiceLine(x) : geoStatus(slots.executions))} <button data-geo="tab" data-tab="progress">查看</button> <button data-geo="tab" data-tab="plan">问这项工作</button></li><li>${esc(monitor)} ${button('查看', 'questions', {attention: 'needs_attention'})} ${button('问这项工作', 'questions', {attention: 'needs_attention'})}</li></ul><p>“问这项工作”定位到已保存证据与说明。仅列出当前项目链内、当前母稿检查通过的可交付版本；制作中、待修补或尚未提交确认的稿件不会计入待确认。客户确认后仍需安排发布。</p><h2>GEO 优化概览</h2>${v ? `${a.scope.binding_state === 'unbound' ? '<p>当前项目尚未关联业务</p>' : ''}<p>当前可交付内容库存：${count(v.content.active_task_count)} 项任务，${count(v.content.task_count_with_master)} 项已有母稿，${count(v.content.variant_count)} 份渠道稿，${count(v.content.native_published_record_count)} 条原生发布登记。</p>` : `<p>${geoStatus(slots.overview)}</p>`}${geoBasis(a)}${simulatedMetrics === null ? geoOpenWeekProgress(v?.open_week_progress ?? b?.data.open_week_progress) : ''}${weeklyCard}${simulatedMetrics === null && slots.visibility?.error ? `<p role="status">AI 指标：${geoStatus(slots.visibility)}</p>` : ''}${button('查看 AI 数据', 'visibility')}${simulatedMetrics === null ? '<p>站内任务：月度计划，与 AI 正式周指标周期不同。</p>' : ''}`;
 }
 export function geoExecutions(value, plan = false) {
   if (plan) {

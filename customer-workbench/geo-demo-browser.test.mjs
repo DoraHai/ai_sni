@@ -108,7 +108,8 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.evaluate(() => scrollTo(0, 0)); await screenshot('demo-mobile-first-screen.png');
     await p.setViewport({width: 1440, height: 1000});
     await p.click('[data-view=formal]');
-    assert(await p.$('.geo-demo'));
+    assert.equal(await p.$('.geo-workspace .geo-demo, .geo-demo-charts'), null);
+    assert.match(await p.$eval('.geo-workspace', (e) => e.innerText), /本期要点[\s\S]*GEO 优化概览[\s\S]*AI 提及率/);
     assert(!/暂不可计算|合格回答|真实 API 回答|数据范围与依据/.test(await p.$eval('.geo-workspace', (e) => e.innerText)));
     assert.equal(await p.$('.geo-tabs [data-tab=plan]'), null);
     assert.equal(await p.$('.geo-tabs [data-tab=deliveries]'), null);
