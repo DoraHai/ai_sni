@@ -38,7 +38,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   function paint() {
     if (!node) return;
     const context = host.getContext();
-    const mode = isDemoProject(context) ? `<nav class="geo-view-modes" aria-label="GEO 数据模式"><button data-geo="mode" data-view="demo" aria-pressed="${demoView()}">演示模式</button><button data-geo="mode" data-view="formal" aria-pressed="${!demoView()}">正式模式</button></nav>` : '';
+    const mode = isDemoProject(context) ? `<nav class="geo-view-modes" aria-label="GEO 数据模式"><button data-geo="mode" data-view="demo" aria-pressed="${demoView()}">总览模式</button><button data-geo="mode" data-view="formal" aria-pressed="${!demoView()}">详细模式</button></nav>` : '';
     if (demoView()) {
       node.innerHTML = mode + geoDemoArea(slots.overview?.value || {tenant_id: context.tenantId,
         project_id: context.projectId, read_only: true}, demoFilter, {expanded: demoExpanded, selectedDay: demoDay}) +
