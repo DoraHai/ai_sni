@@ -126,3 +126,79 @@ def test_http_scoped_batch_and_formal_path_are_independent(env, batch):
     assert data['open_week_progress']['detected_answer_count'] == 0
     assert get(env, '/overview', project=3, tenant=16).status_code == 403
     assert 'demo_batch' not in get(env, '/visibility', project=3, tenant=15, week_end='2026-11-16').json()['data']
+
+
+# The saved projection already contains every input needed by homepage charts.
+# These are synthetic tests, never observed production totals or a fallback.
+def _chart_counts(group):
+    from collections import defaultdict
+    from app.geo.content.time_windows import shanghai_day_of_utc_naive
+    daily, engines = defaultdict(list), defaultdict(list)
+    for question in group['questions']:
+        for cell in question['by_engine']:
+            for sample in cell['samples']:
+                at = datetime.fromisoformat(sample['captured_at'].replace('Z', '+00:00'))
+                daily[str(shanghai_day_of_utc_naive(at))].append(sample)
+                engines[cell['engine_key']].append(sample)
+    def counts(samples):
+        return (len(samples), sum(s['mentioned'] is True for s in samples),
+                sum(s['mentioned'] is None for s in samples))
+    return ({key: counts(value) for key, value in sorted(daily.items())},
+            {key: counts(value) for key, value in engines.items()})
+
+
+def test_saved_projection_supports_daily_and_engine_charts_with_unknown_denominator(batch):
+    records, rows = batch
+    for row in rows:
+        row.mentions_brand = row.prompt_id == 85
+    ordinary = [r for r in rows if r.prompt_id != 85]
+    ordinary[0].mentions_brand = True
+    ordinary[1].mentions_brand = None
+    ordinary[-1].mentions_brand = True
+    data = project_batch(records, list(reversed(rows)))
+    daily, engines = _chart_counts(data['ordinary'])
+    assert list(daily)[0] == str(START)
+    assert list(daily)[-1] == data['period']['end_date']
+    assert set(engines) == set(ENGINES)
+    assert sum(n for n, _, _ in daily.values()) == len(ordinary)
+    assert sum(m for _, m, _ in daily.values()) == 2
+    assert sum(u for _, _, u in daily.values()) == 1
+    assert tuple(map(sum, zip(*daily.values()))) == tuple(map(sum, zip(*engines.values())))
+    assert data['ordinary']['mention_rate'] == round(100 * 2 / len(ordinary), 4)
+    assert data['ordinary']['unknown_mention_count'] == 1
+    for engine in ENGINES:
+        selected = [r for r in ordinary if r.engine == engine]
+        assert engines[engine] == (len(selected), sum(r.mentions_brand is True for r in selected),
+                                   sum(r.mentions_brand is None for r in selected))
+    probe_daily, probe_engines = _chart_counts(data['brand_probe'])
+    assert all(n == m and u == 0 for n, m, u in probe_daily.values())
+    assert all(n == m and u == 0 for n, m, u in probe_engines.values())
+    # Probe-only edits cannot change ordinary daily/engine chart inputs.
+    for row in rows:
+        if row.prompt_id == 85:
+            row.mentions_brand = False
+    assert _chart_counts(project_batch(records, rows)['ordinary']) == (daily, engines)
+
+
+@pytest.mark.parametrize('tid,pid', [(16, 3), (15, 4), (16, 4)])
+def test_chart_inputs_are_absent_outside_authorized_project(batch, tid, pid):
+    records, rows = batch
+    records.project.tenant_id, records.project.id = tid, pid
+    assert project_batch(records, rows) is None
+
+
+def test_missing_batch_has_no_chart_inputs(batch):
+    records, _ = batch
+    data = project_batch(records, [])
+    assert data['reason_code'] == 'batch_missing'
+    assert 'ordinary' not in data and 'brand_probe' not in data
+
+
+def test_saved_projection_does_not_embed_observed_production_totals():
+    import ast
+    from pathlib import Path
+    source = Path(__file__).resolve().parents[1] / 'app/geo/project_demo.py'
+    forbidden = {1680, 1440, 240, 922, 221, 64.0, 92.1, 30}
+    literals = [node.value for node in ast.walk(ast.parse(source.read_text(encoding='utf-8')))
+                if isinstance(node, ast.Constant) and type(node.value) in (int, float)]
+    assert forbidden.isdisjoint(literals)
