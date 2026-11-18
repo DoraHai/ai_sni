@@ -13,7 +13,7 @@ export function mountGeoWorkbench({root, host, logout, initialOnsiteTaskId = nul
     if (identity) {
       project.renderInto(root.querySelector('[data-geo-workspace]'));
       const container = root.querySelector('[data-search-visibility]');
-      container.hidden = !['home', 'data'].includes(project.getTab());
+      container.hidden = project.isDemoView() || !['home', 'data'].includes(project.getTab());
       visibility.renderInto(container);
     }
   }
