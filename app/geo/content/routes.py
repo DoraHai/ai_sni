@@ -841,7 +841,7 @@ async def _evaluate_and_store_rules(
 
 
 async def _task_payload(
-    session: AsyncSession, task: GeoContentTask, *, detail: bool = False
+    session: AsyncSession, task: GeoContentTask, *, detail: bool = False, explain_customer: bool = False
 ) -> dict[str, Any]:
     prompt = await session.get(GeoPrompt, task.prompt_id)
     from app.geo.content.brief import brief_ready, normalize_brief
@@ -876,6 +876,9 @@ async def _task_payload(
         "created_at": _iso(task.created_at),
         "updated_at": _iso(task.updated_at),
     }
+    if explain_customer:
+        from app.geo.content.customer_readiness import customer_readiness
+        payload['customer_readiness'] = await customer_readiness(session, task, prompt)
     if not detail:
         return payload
 
@@ -2731,10 +2734,24 @@ async def list_answer_snapshots(
     patrol_run_id: int | None = Query(None, description="按巡检 run 追溯快照"),
     simulated: bool | None = Query(None, description="过滤模拟/非模拟"),
     sample_mode: str | None = Query(None),
+    detail_view: bool = Query(False),
+    page_size: int = Query(20, ge=1, le=100),
+    before_id: int | None = Query(None, gt=0),
+    watermark: int | None = Query(None, ge=0),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if detail_view is True:
+        if prompt_id is None:
+            raise HTTPException(422, "详情分页必须指定问题")
+        if any(v is not None for v in (engine, patrol_run_id, simulated, sample_mode)):
+            raise HTTPException(422, "详情分页仅按当前授权问题读取")
+        from app.geo.content.observation_view import observation_page
+        result = await observation_page(session, ctx, tenant_id, prompt_id,
+            page_size=page_size, before_id=before_id, watermark=watermark)
+        rows = result.pop('rows')
+        return {**result, 'items': [_snapshot_payload(r) for r in rows]}
     stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
     if prompt_id is not None:
         stmt = stmt.where(GeoAnswerSnapshot.prompt_id == prompt_id)
@@ -7128,7 +7145,7 @@ async def list_tasks(
         .limit(limit)
     )
     rows = list(await session.scalars(stmt))
-    items = [await _task_payload(session, r, detail=False) for r in rows]
+    items = [await _task_payload(session, r, detail=False, explain_customer=True) for r in rows]
     return {
         "items": items,
         "total": total,
@@ -7382,7 +7399,7 @@ async def get_task(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
-    return await _task_payload(session, task, detail=True)
+    return await _task_payload(session, task, detail=True, explain_customer=True)
 
 
 @router.get("/content-tasks/{task_id}/impact")

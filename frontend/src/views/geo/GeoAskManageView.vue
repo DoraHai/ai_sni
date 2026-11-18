@@ -29,7 +29,9 @@ import GeoAdvisorProjectPicker from '../../components/GeoAdvisorProjectPicker.vu
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { downloadCsv, engineDisplay, engineLabelOf, labelOf, SENTIMENT_LABEL } from '../../utils/geoReportLabels'
-import { groupSnapshotsByPrompt, positionRank, sentimentShare, splitByMidpoint, summarizeSnapshots } from '../../utils/geoSnapshotSummary'
+import { groupSnapshotsByPrompt, positionRank } from '../../utils/geoSnapshotSummary'
+
+import { questionScopeQuery, validQuestionScope, isBrandEvaluation, evaluationLabel } from '../../utils/geoQuestionScope.js'
 
 const isAdvisor = computed(() => !!advisorClaims(session.token) || session.user?.is_advisor === true)
 
@@ -46,6 +48,14 @@ const prompts = ref([])
 const engines = ref([])
 const snapByPrompt = ref(new Map())
 const promptSnapRows = ref(new Map())
+const snapshotError = ref(false)
+const engineError = ref(false)
+const evalData = ref(null)
+const evalEvidence = ref([])
+const evalLoading = ref(false)
+const evalError = ref('')
+let coreGeneration = 0, questionGeneration = 0, evalGeneration = 0
+let switchingTenant = false
 const qSearch = ref('')
 const selectedIds = ref([])
 const batchOpen = ref(false)
@@ -156,9 +166,9 @@ const tableMeta = computed(() => {
 
 const contextSummary = computed(() => {
   if (layer.value === 'business') return ''
-  const biz = selectedBusiness.value?.name || '未选择'
+  const biz = selectedBusiness.value?.name || '当前客户全部授权业务'
   if (layer.value === 'keyword') return { prefix: '当前页面的关键词属于业务', biz, kw: '' }
-  const kw = selectedUnit.value?.keyword || selectedUnit.value?.name || '未选择'
+  const kw = selectedUnit.value?.keyword || selectedUnit.value?.name || '全部授权关键词'
   return { prefix: '当前页面的问题属于业务', biz, kw }
 })
 
@@ -186,7 +196,7 @@ function fmtTime(iso) {
 }
 
 function statusMeta(row) {
-  if (row?.status === 'archived') return { zh: '已暂停', paused: true }
+  if (['archived', 'inactive', 'paused'].includes(row?.status)) return { zh: '已暂停', paused: true }
   return { zh: '监控中', paused: false }
 }
 
@@ -197,83 +207,63 @@ function clipText(s, n = 80) {
 }
 
 function evalKindLabel(kind, rate) {
-  if (kind === 'insufficient') return '样本不足'
+  if (kind === 'insufficient') return '暂不判断倾向'
   if (kind === 'positive') return `正向 ${rate}%`
   if (kind === 'negative') return `负向 ${rate}%`
   return `中立 ${rate}%`
 }
 
+const modelStates = {not_configured: '未配置到当前监控范围', not_attempted: '未尝试（未找到尝试记录）', failed: '检测失败', attempted_unsaved: '已有尝试记录但未找到已保存回答', saved_unscored: '已保存未评分', evaluated: '已有有效评价'}
 const evalDrawer = computed(() => {
   const row = evalTarget.value
   if (!row) return null
-  const snaps = promptSnapRows.value.get(row.id) || []
-  const sum = snapByPrompt.value.get(row.id) || summarizeSnapshots(snaps)
-  const labeled = snaps.filter((s) => ['positive', 'neutral', 'negative'].includes(s.sentiment))
-  const sent = sentimentShare(labeled)
-  const { prev, cur } = splitByMidpoint(labeled)
-  const prevSent = sentimentShare(prev)
-  const curSent = sentimentShare(cur)
-  const byEngine = new Map()
-  for (const s of snaps) {
-    const key = s.engine || 'other'
-    if (!byEngine.has(key)) byEngine.set(key, [])
-    byEngine.get(key).push(s)
-  }
-  const engineRows = [...byEngine.entries()].map(([engine, rows]) => {
-    const share = sentimentShare(rows)
-    const latest = [...rows].sort((a, b) =>
-      String(b.captured_at || '').localeCompare(String(a.captured_at || '')),
-    )[0]
-    let kind = 'insufficient'
-    let rate = null
-    if (share.n >= 3) {
-      const top = [
-        ['positive', share.positive],
-        ['neutral', share.neutral],
-        ['negative', share.negative],
-      ].sort((a, b) => (b[1] || 0) - (a[1] || 0))[0]
-      kind = top[0]
-      rate = Math.round((top[1] || 0) * 100)
-    }
-    return {
-      engine,
-      name: engineDisplay(engine),
-      kind,
-      rate,
-      samples: share.n,
-      quote: clipText(latest?.raw_text, 72),
-      raw: latest?.raw_text || '',
-      rank: positionRank(latest?.brand_position),
-    }
-  })
+  const d = evalData.value
+  const total = d?.summary
+  const n = total?.evaluated ?? null
+  const pct = key => n >= 3 ? Math.round(total[key] * 100 / n) : null
+  const unit = units.value.find(u => u.id === row.unit_id)
   return {
-    question: row.question,
-    biz: selectedBusiness.value?.name || '—',
-    kw: selectedUnit.value?.keyword || selectedUnit.value?.name || '—',
-    engineCount: enabledEngines.value.length,
-    mention: sum.mentionRate == null ? null : Math.round(sum.mentionRate * 100),
-    snapN: sum.n || snaps.length,
-    sampleN: sent.n,
-    sent,
-    posPct: sent.positive == null ? null : Math.round(sent.positive * 100),
-    neuPct: sent.neutral == null ? null : Math.round(sent.neutral * 100),
-    negPct: sent.negative == null ? null : Math.round(sent.negative * 100),
-    from: prevSent.positive == null ? null : Math.round(prevSent.positive * 100),
-    to: curSent.positive == null ? null : Math.round(curSent.positive * 100),
-    engines: engineRows,
-    evidence: snaps.filter((s) => s.raw_text).slice(0, 8).map((s) => ({
-      model: engineDisplay(s.engine),
-      time: fmtTime(s.captured_at),
-      quote: clipText(s.raw_text, 64),
-      raw: s.raw_text,
-      tone: s.sentiment && s.sentiment !== 'unknown' ? labelOf(SENTIMENT_LABEL, s.sentiment) : '—',
-      rank: positionRank(s.brand_position) ?? '—',
-    })),
-    insufficient: sent.n < 3,
+    question: row.question, biz: bizName(unit?.business_id), kw: unitLabel(unit),
+    engineCount: d ? d.models.filter(m => m.in_plan).length : null,
+    snapN: total?.saved ?? null, sampleN: n,
+    mention: total?.saved > 0 ? Math.round(total.mentioned * 100 / total.saved) : null,
+    posPct: pct('positive'), neuPct: pct('neutral'), negPct: pct('negative'),
+    insufficient: n == null || n < 3,
+    engines: (d?.models || []).map(m => {
+      const top = ['positive', 'neutral', 'negative'].sort((a,b) => m[b] - m[a])[0]
+      return {...m, name: engineDisplay(m.engine), stateLabel: modelStates[m.state] || '状态待核对',
+        kind: m.evaluated >= 3 ? top : 'insufficient',
+        rate: m.evaluated >= 3 ? Math.round(m[top] * 100 / m.evaluated) : null}
+    }),
+    evidence: evalEvidence.value.map(s => ({id: s.id, model: engineDisplay(s.engine), time: fmtTime(s.captured_at),
+      quote: clipText(s.raw_text, 64), raw: s.raw_text,
+      tone: isBrandEvaluation(s) ? labelOf(SENTIMENT_LABEL, s.sentiment) : '无有效品牌评价',
+      rank: positionRank(s.brand_position) ?? '—'})),
   }
 })
 
+async function loadEval(more = false) {
+  if (!evalTarget.value || !tenantId.value || evalLoading.value) return
+  const generation = ++evalGeneration, owner = tenantId.value, identity = session.token, id = evalTarget.value.id
+  evalLoading.value = true
+  evalError.value = ''
+  try {
+    const page = evalData.value?.pagination
+    const d = await listGeoAnswerSnapshots(owner, {prompt_id: id, detail_view: true, page_size: 20,
+      ...(more ? {before_id: page.next_before_id, watermark: page.watermark} : {})})
+    if (generation !== evalGeneration || owner !== tenantId.value || identity !== session.token || id !== evalTarget.value?.id) return
+    if (!d.summary || !Array.isArray(d.models) || !d.pagination) throw new Error('分页响应不完整')
+    evalData.value = d
+    evalEvidence.value = more ? [...evalEvidence.value, ...d.items] : d.items
+  } catch {
+    if (generation === evalGeneration) evalError.value = '回答证据读取失败，请重试；失败不代表没有回答。'
+  } finally {
+    if (generation === evalGeneration) evalLoading.value = false
+  }
+}
+
 function mentionOf(row) {
+  if (snapshotError.value) return null
   const sum = snapByPrompt.value.get(row.id)
   if (sum?.mentionRate == null) return null
   return {
@@ -287,23 +277,16 @@ function lastWatchAt(row) {
 }
 
 function evalMeta(row) {
-  const rows = (promptSnapRows.value.get(row.id) || []).filter(
-    (s) => s.sentiment && s.sentiment !== 'unknown',
-  )
-  const sent = sentimentShare(rows)
-  if (!sent.n) return { label: '样本不足', tone: 'insufficient', n: 0 }
-  if (sent.n < 3) return { label: '样本不足', tone: 'insufficient', n: sent.n }
-  const entries = [
-    ['positive', '正面', sent.positive],
-    ['neutral', '中性', sent.neutral],
-    ['negative', '负面', sent.negative],
-  ].sort((a, b) => (b[2] || 0) - (a[2] || 0))
-  const top = entries[0]
-  return {
-    label: `${top[1]} ${Math.round((top[2] || 0) * 100)}%`,
-    tone: top[0] === 'positive' ? 'pos' : top[0] === 'negative' ? 'neg' : '',
-    n: sent.n,
+  if (snapshotError.value) return {label: '回答读取失败，请重试', tone: 'insufficient'}
+  const rows = promptSnapRows.value.get(row.id) || []
+  const n = rows.filter(isBrandEvaluation).length
+  let label = evaluationLabel(rows.length, n)
+  if (n >= 3) {
+    const totals = ['positive', 'neutral', 'negative'].map(key => [key, rows.filter(s => isBrandEvaluation(s) && s.sentiment === key).length])
+    totals.sort((a,b) => b[1] - a[1])
+    label += '；' + evalKindLabel(totals[0][0], Math.round(100 * totals[0][1] / n))
   }
+  return {label, tone: n < 3 ? 'insufficient' : ''}
 }
 
 function openMention(row) {
@@ -311,11 +294,18 @@ function openMention(row) {
 }
 
 function openEval(row) {
+  closeEval()
   evalTarget.value = row
+  loadEval()
 }
 
 function closeEval() {
+  ++evalGeneration
+  evalLoading.value = false
   evalTarget.value = null
+  evalData.value = null
+  evalEvidence.value = []
+  evalError.value = ''
 }
 
 function showEvalQuote(raw) {
@@ -342,29 +332,16 @@ function replaceQuery(patch, drop = []) {
   Object.keys(next).forEach((k) => {
     if (next[k] == null || next[k] === '') delete next[k]
   })
-  router.replace({ path: '/geo/questions', query: next })
+  return router.replace({ path: '/geo/questions', query: next })
 }
 
 function goLayer(next, extra = {}) {
-  const q = { layer: next, ...extra }
-  if (next === 'keyword' && !q.business_id && !selectedBusinessId.value && businesses.value[0]) {
-    q.business_id = String(businesses.value[0].id)
-  } else if (next !== 'business' && selectedBusinessId.value && !q.business_id) {
-    q.business_id = String(selectedBusinessId.value)
-  }
-  if (next === 'question') {
-    if (!q.unit_id && !selectedUnitId.value) {
-      const first = (q.business_id
-        ? units.value.filter((u) => String(u.business_id) === String(q.business_id))
-        : units.value)[0]
-      if (first) q.unit_id = String(first.id)
-    } else if (selectedUnitId.value && !q.unit_id) {
-      q.unit_id = String(selectedUnitId.value)
-    }
-  }
-  const drop = []
-  if (next === 'business') drop.push('unit_id')
-  replaceQuery(q, drop)
+  router.replace({path: '/geo/questions', query: questionScopeQuery(route.query, next, extra)})
+}
+
+function clearFilters() {
+  replaceQuery({layer: layer.value}, ['business_id', 'unit_id', 'tag'])
+  qSearch.value = ''
 }
 
 function drillBusiness(row) {
@@ -379,55 +356,43 @@ function drillKeyword(row) {
 }
 
 async function loadCore() {
-  if (!tenantId.value) {
-    error.value = '请先选择客户或配置本地 API Key'
-    businesses.value = []
-    units.value = []
-    return
-  }
-  loading.value = true
-  error.value = ''
+  const generation = ++coreGeneration, owner = tenantId.value, identity = session.token
+  businesses.value = []; units.value = []; engines.value = []
+  if (!owner) { error.value = '请先选择客户'; return }
+  loading.value = true; error.value = ''; engineError.value = false
   try {
     const [b, u, e] = await Promise.all([
-      listGeoBusinesses(tenantId.value),
-      listGeoUnits(tenantId.value),
-      listGeoTrackingEngines(tenantId.value, true).catch(() => ({ items: [] })),
+      listGeoBusinesses(owner, {status: ''}), listGeoUnits(owner, {status: ''}),
+      listGeoTrackingEngines(owner, true).catch(() => { if (generation === coreGeneration) engineError.value = true; return {items: []} }),
     ])
-    businesses.value = b.items || []
-    units.value = u.items || []
-    engines.value = e.items || []
-    if (layer.value === 'keyword' && !selectedBusinessId.value && businesses.value[0]) {
-      replaceQuery({
-        layer: 'keyword',
-        business_id: String(businesses.value[0].id),
-      })
-    }
-  } catch (e) {
-    error.value = e.message || '加载失败'
+    if (generation !== coreGeneration || owner !== tenantId.value || identity !== session.token) return
+    businesses.value = b.items || []; units.value = u.items || []; engines.value = e.items || []
+    const scope = validQuestionScope(selectedBusinessId.value, selectedUnitId.value, businesses.value, units.value)
+    if (scope.business_id !== selectedBusinessId.value || scope.unit_id !== selectedUnitId.value)
+      await replaceQuery(scope)
+  } catch {
+    if (generation === coreGeneration) error.value = '授权业务或关键词读取失败，请重试'
   } finally {
-    loading.value = false
+    if (generation === coreGeneration) loading.value = false
   }
 }
 
 async function loadQuestions() {
-  if (!tenantId.value || layer.value !== 'question') {
-    prompts.value = []
-    snapByPrompt.value = new Map()
-    promptSnapRows.value = new Map()
-    return
-  }
-  loading.value = true
-  error.value = ''
+  const generation = ++questionGeneration, owner = tenantId.value, identity = session.token
+  prompts.value = []; snapByPrompt.value = new Map(); promptSnapRows.value = new Map()
+  if (switchingTenant || !owner || layer.value !== 'question') return
+  loading.value = true; error.value = ''; snapshotError.value = false
   try {
     const params = {}
-    if (selectedUnitId.value && !tagFilter.value) params.unit_id = selectedUnitId.value
-    else if (selectedBusinessId.value && !tagFilter.value) params.business_id = selectedBusinessId.value
+    if (selectedUnitId.value) params.unit_id = selectedUnitId.value
+    else if (selectedBusinessId.value) params.business_id = selectedBusinessId.value
     const [data, snaps] = await Promise.all([
-      listGeoPrompts(tenantId.value, params),
-      listGeoAnswerSnapshots(tenantId.value, { limit: 300 }).catch(() => ({ items: [] })),
+      listGeoPrompts(owner, params),
+      listGeoAnswerSnapshots(owner).catch(() => { if (generation === questionGeneration) snapshotError.value = true; return null }),
     ])
+    if (generation !== questionGeneration || owner !== tenantId.value || identity !== session.token) return
     prompts.value = data.items || []
-    const items = snaps.items || snaps.snapshots || []
+    const items = snaps?.items || []
     snapByPrompt.value = groupSnapshotsByPrompt(items)
     const grouped = new Map()
     for (const s of items) {
@@ -436,17 +401,16 @@ async function loadQuestions() {
       grouped.get(s.prompt_id).push(s)
     }
     promptSnapRows.value = grouped
-  } catch (e) {
-    error.value = e.message || '加载提问失败'
-    prompts.value = []
+  } catch {
+    if (generation === questionGeneration) error.value = '加载提问失败，请重试'
   } finally {
-    loading.value = false
+    if (generation === questionGeneration) loading.value = false
   }
 }
 
 async function loadAll() {
   await loadCore()
-  await loadQuestions()
+  if (!error.value) await loadQuestions()
 }
 
 async function importPromptCsv(event) {
@@ -841,8 +805,20 @@ function onDocClick(ev) {
   if (!ev.target.closest?.('.batch-menu-wrap')) batchOpen.value = false
 }
 
-watch([tenantId], loadAll)
+watch([tenantId, () => session.token], async () => {
+  switchingTenant = true
+  ++coreGeneration; ++questionGeneration
+  closeEval()
+  businesses.value = []; units.value = []; engines.value = []; prompts.value = []
+  snapByPrompt.value = new Map(); promptSnapRows.value = new Map()
+  selectedIds.value = []; qSearch.value = ''; dialogOpen.value = false; batchOpen.value = false
+  pager.resetPage()
+  await replaceQuery({tenant_id: tenantId.value || null}, ['business_id', 'unit_id', 'tag'])
+  switchingTenant = false
+  await loadAll()
+})
 watch([layer, selectedBusinessId, selectedUnitId, tagFilter], () => {
+  closeEval()
   selectedIds.value = []
   pager.resetPage()
   if (layer.value === 'question') loadQuestions()
@@ -852,7 +828,7 @@ onMounted(() => {
   document.addEventListener('click', onDocClick)
   loadAll()
 })
-onUnmounted(() => document.removeEventListener('click', onDocClick))
+onUnmounted(() => { ++coreGeneration; ++questionGeneration; closeEval(); document.removeEventListener('click', onDocClick) })
 </script>
 
 <template>
@@ -866,7 +842,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
       <section class="context-strip">
-        <div class="context-left">
+        <div class="context-left"><button type="button" class="mini-btn" @click="clearFilters">全部授权范围 / 清除筛选</button>
           <span v-if="layer !== 'business'" class="context-summary">
             {{ contextSummary.prefix }}
             <b>{{ contextSummary.biz }}</b>
@@ -879,7 +855,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         </div>
       </section>
 
-      <section class="layer-tabs">
+      <p class="subtle">未选业务或关键词时展示当前客户授权范围全部（包含暂停项，状态分别标注）。监控模型数表示配置数，不表示已成功检测数。</p><p v-if="snapshotError" role="alert">回答读取失败，提及率和评价数暂不可用。<button class="mini-btn" @click="loadQuestions">重试读取</button></p><p v-if="engineError" role="alert">模型配置读取失败，请刷新重试。</p><section class="layer-tabs">
         <div
           class="layer-tab"
           :class="{ active: layer === 'business' }"
@@ -997,8 +973,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
               <tr v-if="!pager.pagedItems.length">
                 <td :colspan="layer === 'keyword' ? 7 : 8" class="empty-cell">
                   <template v-if="layer === 'business'">还没有业务。点右上角新增。</template>
-                  <template v-else-if="layer === 'keyword'">该业务下还没有关键词。</template>
-                  <template v-else>该关键词下还没有提问。</template>
+                  <template v-else-if="layer === 'keyword'">当前授权筛选范围暂无关键词。</template>
+                  <template v-else>当前授权筛选范围暂无提问。</template>
                 </td>
               </tr>
               <tr v-for="row in pager.pagedItems" :key="row.id">
@@ -1210,22 +1186,25 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           <button type="button" class="eval-close" aria-label="关闭" @click="closeEval">×</button>
         </header>
         <div class="eval-drawer-body">
+          <p v-if="evalLoading" role="status">正在读取已有观测…</p>
+          <p v-if="evalError" role="alert">{{ evalError }} <button class="mini-btn" @click="loadEval(!!evalData)">重试读取</button></p>
+          <template v-if="evalData">
           <div class="eval-meta">
             <div><span>所属业务</span><b>{{ evalDrawer.biz }}</b></div>
             <div><span>关键词</span><b>{{ evalDrawer.kw }}</b></div>
             <div><span>统计周期</span><b>已采集快照</b></div>
-            <div><span>监控模型</span><b>{{ evalDrawer.engineCount || '—' }}</b></div>
+            <div><span>监控范围配置模型数（非成功数）</span><b>{{ evalDrawer.engineCount ?? '未读取' }}</b></div>
             <div><span>AI提及率</span><b>{{ evalDrawer.mention == null ? '—' : evalDrawer.mention + '%' }}</b></div>
-            <div><span>有效品牌评价样本</span><b>{{ evalDrawer.sampleN }}</b></div>
+            <div><span>有效品牌评价样本</span><b>{{ evalDrawer.sampleN ?? '未读取' }}</b></div>
           </div>
           <p class="eval-joint">
-            AI提及率回答「有没有提到品牌」（{{ evalDrawer.snapN }} 条快照）；AI评价回答「提到以后怎么看品牌」。
+            AI提及率回答「有没有提到品牌」（{{ evalDrawer.snapN }} 条已保存回答）；AI评价回答「提到以后怎么看品牌」。
           </p>
 
           <section class="eval-sec">
             <h4>AI整体怎么评价品牌？</h4>
             <template v-if="evalDrawer.insufficient">
-              <p>有效品牌评价样本仅 {{ evalDrawer.sampleN }} 条，暂不输出正向/中立/负向占比，避免小样本误导。</p>
+              <p>已保存 {{ evalDrawer.snapN }} 条回答；有效品牌评价 {{ evalDrawer.sampleN }} 条{{ evalDrawer.sampleN > 0 ? "（小样本）" : "，暂无有效品牌评价" }}。至少 3 条有效品牌评价后再判断倾向。</p>
             </template>
             <template v-else>
               <div class="eval-bar"><span>正向</span><i><span :style="{ width: evalDrawer.posPct + '%', background: '#16a34a' }" /></i><b>{{ evalDrawer.posPct }}%</b></div>
@@ -1242,23 +1221,16 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
                 <b>{{ item.name }}</b>
                 <span class="eval-pill" :class="item.kind === 'positive' ? 'pos' : item.kind === 'negative' ? 'neg' : 'insufficient'">{{ evalKindLabel(item.kind, item.rate) }}</span>
               </div>
-              <p v-if="item.kind === 'insufficient'">当前仅获得 {{ item.samples }} 条有效品牌评价。</p>
-              <p v-else>最新回答：「{{ item.quote || '—' }}」<template v-if="item.rank"> · 品牌位置 {{ item.rank }}</template></p>
-              <button v-if="item.raw" type="button" class="mini-btn" @click="showEvalQuote(item.raw)">查看原始回答</button>
+              <p>{{ item.stateLabel }}；已保存 {{ item.saved }} 条回答，有效品牌评价 {{ item.evaluated }} 条<span v-if="item.evaluated > 0 && item.evaluated < 3">（小样本）</span>。</p>
+              <p>最近尝试：{{ item.last_attempt_at ? fmtTime(item.last_attempt_at) : '未找到尝试记录' }}；{{ item.provider || '供应商未记录' }} / {{ item.model || '请求模型别名未记录' }}。</p>
+              <p v-if="item.attempt_state === 'failed'">最近一次尝试失败；已有保存结果仍保留。错误分类：检测未完成。</p>
             </div>
           </section>
 
           <section class="eval-sec">
-            <h4>最近评价有没有变化？</h4>
-            <p v-if="evalDrawer.from == null || evalDrawer.to == null">样本不足，暂看不出前后变化。</p>
-            <p v-else>
-              观察期内正向评价：{{ evalDrawer.from }}% → {{ evalDrawer.to }}%
-              {{ evalDrawer.to - evalDrawer.from >= 0 ? '+' : '' }}{{ evalDrawer.to - evalDrawer.from }}%
-            </p>
-          </section>
-
+            <h4>最近评价有没有变化？</h4><p>当前为已保存快照观察。未取得可比的完整时间分组，暂不显示涨跌；不作为正式周同比。</p></section>
           <section class="eval-sec">
-            <h4>评价依据</h4>
+            <h4>评价依据</h4><p>已加载 {{ evalEvidence.length }} / {{ evalData.pagination.total_count }} 条回答；包含未评分回答。当前监控范围按租户已保存模型选择显示，不保证每题已安排或成功采集。</p>
             <p>主题标签和改善建议需要从回答里抽取，当前尚未接入，先展示已标注的快照。</p>
             <table v-if="evalDrawer.evidence.length" class="eval-evidence">
               <thead>
@@ -1274,7 +1246,9 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
                 </tr>
               </tbody>
             </table>
+            <button v-if="evalData.pagination.has_more" class="mini-btn" :disabled="evalLoading" @click="loadEval(true)">继续加载回答</button>
           </section>
+          </template>
         </div>
         <footer class="eval-drawer-foot">
           <button type="button" class="mini-btn" :disabled="creatingTaskId === evalTarget?.id" @click="createArticle(evalTarget)">

@@ -55,7 +55,8 @@ def handler():
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "list_tasks":
             node.decorator_list = []
             nodes.append(node)
-    async def payload(session, row, detail=False):
+    async def payload(session, row, detail=False, *, explain_customer=False):
+        assert explain_customer is True
         return {"id": row.id, "status": row.status}
     namespace = dict(Query=Query, Depends=Depends, get_session=lambda: None,
                      require_scoped_auth=lambda: None, HTTPException=HTTPException,

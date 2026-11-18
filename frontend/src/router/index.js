@@ -76,6 +76,7 @@ const routes = [
       { path: 'questions', component: () => import('../views/geo/GeoPromptsView.vue'), meta: { title: '优化意图词', documentTitle: 'GEO 工作台｜优化意图词' } },
       { path: 'knowledge', component: () => import('../views/geo/GeoFactsView.vue'), meta: { title: '知识库', documentTitle: 'GEO 工作台｜知识库' } },
       { path: 'brand', component: () => import('../views/geo/GeoBrandSettingsView.vue'), meta: { title: '品牌资料', documentTitle: 'GEO 工作台｜品牌资料' } },
+      { path: 'projects', component: () => import('../views/geo/GeoProjectsView.vue'), meta: { title: '项目管理', documentTitle: 'GEO 工作台｜项目管理', perm: 'geo.assets' } },
       { path: 'models', component: () => import('../views/geo/GeoEnginesView.vue'), meta: { title: '引擎', documentTitle: 'GEO 工作台｜引擎' } },
       { path: 'citations', component: () => import('../views/geo/GeoCitationsView.vue'), meta: { title: 'AI 引用次数', documentTitle: 'GEO 工作台｜AI 引用次数' } },
       { path: 'competitors', component: () => import('../views/geo/GeoCompetitorsView.vue'), meta: { title: '竞品分析', documentTitle: 'GEO 工作台｜竞品分析' } },
@@ -391,7 +392,7 @@ router.beforeEach((to) => {
   if (!to.meta.public && !permOk(to.meta.perm)) {
     const dest = firstAllowedPath()
     if (dest && dest !== to.path) return { path: dest }
-    if (!dest) return
+    if (!dest) return false
   }
 })
 router.afterEach((to) => {

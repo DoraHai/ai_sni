@@ -257,7 +257,22 @@ async def project_executions(project_id: int, tenant_id: int,
     from app.models import User
     advisor_id = plan_for(project).get("advisor_user_id")
     advisor = await session.get(User, advisor_id) if advisor_id else None
-    return {"project_id": project_id, "business_scope": binding(project), "service_plan": plan_for(project),
+    from app.geo.project_workflows import advisor_available
+    plan = plan_for(project)
+    preparation_reasons = []
+    if project.status != "active":
+        preparation_reasons.append("project_paused")
+    if not prompt_ids:
+        preparation_reasons.append("no_project_questions")
+    if not plan.get("prompt_ids"):
+        preparation_reasons.append("no_plan_questions")
+    if not set(plan.get("prompt_ids") or []) <= set(prompt_ids):
+        preparation_reasons.append("project_scope_changed")
+    if not await advisor_available(session, tenant_id, advisor_id):
+        preparation_reasons.append("advisor_assignment_unavailable")
+    return {"project_id": project_id, "business_scope": binding(project), "service_plan": plan,
+        "preparation": {"status": "not_ready" if preparation_reasons else "ready",
+            "project_prompt_count": len(prompt_ids), "reason_codes": preparation_reasons},
         "advisor_name": (advisor.display_name or advisor.username) if advisor else None,
         "blocker": (project.project_settings or {}).get("geo_workflow_blocker"),
         "effective_pause": project.status != "active" or plan_for(project).get("status") != "active",

@@ -1004,10 +1004,10 @@ onMounted(load)
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditAccount(row)">编辑</el-button>
             <el-button
-              v-if="row.auth_type === 'oauth2' || row.provider === 'oauth2'"
+              v-if="!isAdvisor && (row.auth_type === 'oauth2' || row.provider === 'oauth2')"
               link
               type="primary"
-              v-if="!isAdvisor" @click="goOAuth(row)"
+              @click="goOAuth(row)"
             >去授权</el-button>
             <el-button
               v-if="row.auth_type === 'oauth2' || row.provider === 'oauth2'"

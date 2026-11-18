@@ -80,6 +80,15 @@ function pubsText(row) {
   return channels.map((key) => CHANNEL_CN[key] || key).join('、')
 }
 
+function customerReadiness(row) {
+  const r = row.customer_readiness
+  if (!r) return '客户可见资格读取失败，请刷新'
+  const checks = {no_master: '尚无母稿', current_check_missing: '当前母稿未有有效检查', not_ready: '当前母稿检查未通过', ready: '当前母稿检查通过'}
+  const chains = {matched: '项目链匹配', unbound: '未找到当前授权项目链', mismatch: '任务业务与问题链不匹配', ambiguous: '项目归属待核对'}
+  const reviews = {none: '尚未提交客户确认', pending: '待客户确认', rejected: '客户要求修改', approved: r.review_covers_current_master ? '当前母稿已确认' : '仅历史版本确认', unknown: '确认状态未知'}
+  return `母稿版本 ${r.master_version ?? '无'}；${checks[r.current_check] || '检查状态未知'}；${chains[r.project_chain] || '项目链待核对'}；${reviews[r.review_status]}。${r.pending_deliverable ? '可交付且待确认' : r.deliverable ? '已进入可交付库存，待确认列表只计待确认稿件' : '尚未进入客户可交付库存'}`
+}
+
 function geoState(row) {
   if (row.geo_score == null) return { label: '待检测', detail: '尚无检测结果', tone: 'muted' }
   const score = Number(row.geo_score)
@@ -324,6 +333,9 @@ onMounted(load)
             </el-table-column>
             <el-table-column label="信源" min-width="120">
               <template #default="{ row }">{{ pubsText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="客户可见资格与阻塞原因" min-width="300">
+              <template #default="{ row }"><small>{{ customerReadiness(row) }}</small></template>
             </el-table-column>
             <el-table-column label="下一步" min-width="180">
               <template #default="{ row }">
