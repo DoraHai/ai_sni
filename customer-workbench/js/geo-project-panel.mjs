@@ -2,7 +2,7 @@ import {createGeoProjectClient} from './geo-project-client.mjs';
 import {geoTabs, geoHome, geoResource, geoExecutions, geoStatus} from './geo-project-view.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 import {geoQuestionFilters} from './geo-project-insights.mjs';
-import {demoWorkspaceQuestions} from './geo-project-demo-workspace.mjs';
+import {demoWorkspaceMetrics, demoWorkspaceQuestions} from './geo-project-demo-workspace.mjs';
 import {geoDemoArea, isDemoProject} from './geo-project-demo.mjs';
 export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate = () => true}) {
   const client = createGeoProjectClient({transport: host.transport, getContext: host.getContext});
@@ -50,7 +50,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     const demoValue = slots.overview?.value || {tenant_id: context.tenantId, project_id: context.projectId, read_only: true};
     let body =
       tab === 'home'
-        ? geoHome(slots)
+        ? geoHome(slots, simulated ? demoWorkspaceMetrics(demoValue) : null)
         : tab === 'onsite'
           ? `<h2>站内优化</h2><p>仅展示本项目已审核的站内建议与进度。</p>${active?.slot?.value ? geoResource('recommendations', active.slot.value) : `<p>${geoStatus(active?.slot)}</p><button data-geo="retry">重新读取建议</button>`}`
           : tab === 'progress' || tab === 'plan'
@@ -62,22 +62,20 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
                 ? geoResource(active.resource, slot.value)
                 : `<p role="status">${geoStatus(slot)}</p>${slot?.loading ? '' : '<button data-geo="retry">重新读取</button>'}`
               : '<p>暂未开放</p>';
-    if (tab === 'work')
-      body =
-        '<h2>GEO工作</h2><p>查看项目问题与已交付内容；官网建议见站内优化标签。</p><button data-geo="read" data-resource="questions">项目问题</button><button data-geo="read" data-resource="content">内容任务</button>' +
-        body;
-    if (active?.resource === 'questions' && active.slot?.value) {
-      // Keep the selected filters even when an older backend omits data.filters.
+    const questionId = /^questions\/([0-9]+)$/.exec(active?.resource || '')?.[1];
+    if (simulated && tab !== 'home') {
+      if ((tab === 'work' && !active?.resource?.startsWith('content')) || active?.resource === 'questions' || questionId) {
+        body = demoWorkspaceQuestions(demoValue, slots.questions?.value?.data || {}, active?.params || {}, questionId ? Number(questionId) : null);
+      } else if (tab === 'data') {
+        body = '<h2>AI 可见度</h2>' + demoWorkspaceMetrics(demoValue) +
+          '<button data-geo="read" data-resource="questions">问题监测与样本依据</button>';
+      }
+    } else if (active?.resource === 'questions' && active.slot?.value) {
       body = body.replace(/<form data-geo-questions>[\s\S]*?<\/form>/,
         () => geoQuestionFilters(active.slot.value.data, active.params));
     }
-    if (simulated && (tab === 'home' || tab === 'data' || (tab === 'work' && !active?.resource?.startsWith('content')))) {
-      const questionId = /^questions\/([0-9]+)$/.exec(active?.resource || '')?.[1];
-      body = tab === 'work' || active?.resource === 'questions' || questionId
-        ? demoWorkspaceQuestions(demoValue, slots.questions?.value?.data || {}, active?.params || {}, questionId ? Number(questionId) : null)
-        : geoDemoArea(demoValue, demoFilter, {expanded: demoExpanded, selectedDay: demoDay});
-      if (tab === 'work') body = '<button data-geo="read" data-resource="questions">项目问题</button><button data-geo="read" data-resource="content">内容任务</button>' + body;
-    }
+    if (tab === 'work')
+      body = '<h2>GEO工作</h2><p>查看项目问题与已交付内容；官网建议见站内优化标签。</p><button data-geo="read" data-resource="questions">项目问题</button><button data-geo="read" data-resource="content">内容任务</button>' + body;
     const summary = !simulated && tab === 'data' && active?.resource !== 'questions'
       ? slots.summary?.value ? geoResource('summary', slots.summary.value)
         : `<h2>品牌表现汇总</h2><p>${geoStatus(slots.summary)}</p><button data-geo="refresh-summary">重新读取汇总</button>`

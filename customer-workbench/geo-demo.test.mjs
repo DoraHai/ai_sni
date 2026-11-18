@@ -62,8 +62,10 @@ test('target full workspace reuses saved demo counts, preserves filters and clea
   assert(!node.innerHTML.includes('暂不可计算') && !node.innerHTML.includes('data-geo-questions'));
   const mode = {dataset: {geo: 'mode', view: 'formal'}, disabled: false};
   await node.onclick({target: {closest: () => mode}});
-  assert(!node.innerHTML.includes('暂不可计算') && node.innerHTML.includes('data-demo-engine'));
-  assert(!node.innerHTML.includes('data-tab="plan"') && !node.innerHTML.includes('data-all-questions'));
+  assert(node.innerHTML.includes('本期要点') && node.innerHTML.includes('GEO 优化概览'));
+  assert(node.innerHTML.includes('AI 提及率') && !node.innerHTML.includes('geo-demo-charts'));
+  const tabs = node.innerHTML.match(/<nav class="geo-tabs"[^>]*>.*?<\/nav>/)?.[0];
+  assert(tabs && !tabs.includes('data-tab="plan"') && !tabs.includes('data-all-questions'));
   assert(!node.innerHTML.includes('数据范围与依据'));
   const button = {dataset: {geo: 'read', resource: 'questions'}, disabled: false};
   await node.onclick({target: {closest: () => button}});
