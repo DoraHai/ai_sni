@@ -2,6 +2,7 @@ import {createGeoProjectClient} from './geo-project-client.mjs';
 import {geoTabs, geoHome, geoResource, geoExecutions, geoStatus} from './geo-project-view.mjs';
 import {escapeText as esc} from './customer-display.mjs';
 import {geoQuestionFilters} from './geo-project-insights.mjs';
+import {demoWorkspaceQuestions} from './geo-project-demo-workspace.mjs';
 import {geoDemoArea, isDemoProject} from './geo-project-demo.mjs';
 export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate = () => true}) {
   const client = createGeoProjectClient({transport: host.transport, getContext: host.getContext});
@@ -20,10 +21,11 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
   const demoView = () => isDemoProject(host.getContext()) && view === 'demo';
   const available = (key) => !!slots[key]?.value;
   function tabs() {
-    return geoTabs.filter(
+    return geoTabs.filter(([key]) => !isDemoProject(host.getContext()) || !['plan', 'deliveries'].includes(key)).filter(
       ([key]) =>
         key === tab ||
         ['home', 'onsite', 'data', 'deliveries'].includes(key) ||
+        (key === 'work' && isDemoProject(host.getContext())) ||
         (key === 'work' &&
           (slots.questions?.value?.data.items.length > 0 ||
             slots.content?.value?.data.items.length > 0)) ||
@@ -44,6 +46,8 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       return;
     }
     const slot = active?.slot;
+    const simulated = isDemoProject(context);
+    const demoValue = slots.overview?.value || {tenant_id: context.tenantId, project_id: context.projectId, read_only: true};
     let body =
       tab === 'home'
         ? geoHome(slots)
@@ -67,14 +71,21 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       body = body.replace(/<form data-geo-questions>[\s\S]*?<\/form>/,
         () => geoQuestionFilters(active.slot.value.data, active.params));
     }
-    const summary = tab === 'data' && active?.resource !== 'questions'
+    if (simulated && (tab === 'home' || tab === 'data' || (tab === 'work' && !active?.resource?.startsWith('content')))) {
+      const questionId = /^questions\/([0-9]+)$/.exec(active?.resource || '')?.[1];
+      body = tab === 'work' || active?.resource === 'questions' || questionId
+        ? demoWorkspaceQuestions(demoValue, slots.questions?.value?.data || {}, active?.params || {}, questionId ? Number(questionId) : null)
+        : geoDemoArea(demoValue, demoFilter, {expanded: demoExpanded, selectedDay: demoDay});
+      if (tab === 'work') body = '<button data-geo="read" data-resource="questions">项目问题</button><button data-geo="read" data-resource="content">内容任务</button>' + body;
+    }
+    const summary = !simulated && tab === 'data' && active?.resource !== 'questions'
       ? slots.summary?.value ? geoResource('summary', slots.summary.value)
         : `<h2>品牌表现汇总</h2><p>${geoStatus(slots.summary)}</p><button data-geo="refresh-summary">重新读取汇总</button>`
       : '';
     const citations = tab === 'deliveries'
       ? '<button data-geo="read" data-resource="article-citations">已发布文章引用率</button><button data-geo="read" data-resource="deliveries">发布登记与投递回执</button>' : '';
     const weekForm =
-      tab === 'data'
+      tab === 'data' && !simulated
         ? `<form data-geo-week><label>统计周期结束后的周一（北京时间） <input name="week_end" type="date" value="${esc(week || '')}" required></label><button>查看该周</button></form><p>正式指标来自已保存检测结果，历史按当前项目归属重算。</p><button data-geo="read" data-resource="visibility">AI 可见度概览</button><button data-geo="read" data-resource="questions">问题监测</button><button data-geo="read" data-resource="answers">回答证据</button><button data-geo="download" data-format="pdf" ${downloading ? 'disabled' : ''}>下载 PDF 报告</button><button data-geo="download" data-format="xlsx" ${downloading ? 'disabled' : ''}>下载 Excel 报告</button>${downloading ? '<p role="status">正在读取报告…</p>' : ''}`
         : '';
     node.innerHTML = `${mode}<nav class="geo-tabs" aria-label="GEO 工作台">${tabs()
@@ -84,7 +95,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       )
       .join(
         '',
-      )}<button data-geo="read" data-resource="questions" data-all-questions="true" ${active?.resource === 'questions' ? 'aria-current="page"' : ''}>全部问题</button></nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
+      )}${simulated ? '' : `<button data-geo="read" data-resource="questions" data-all-questions="true" ${active?.resource === 'questions' ? 'aria-current="page"' : ''}>全部问题</button>`}</nav><section class="page-card geo-workspace">${tab === 'home' ? '<button data-geo="refresh">重新读取概览</button>' : ''}${simulated && !['home', 'work', 'data'].includes(tab) ? '<p class="geo-demo-warning">演示数据，不代表真实引擎检测或实际效果。检测数据统计日期：2026-10-20 至 2026-11-18（北京时间）；内容与进度保留已有业务记录。</p>' : ''}${weekForm}${summary}${citations}${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}${history.length ? '<button data-geo="back">返回上一层</button>' : ''}${body}${slot?.value && slot.loading ? '<p role="status">正在读取下一页…</p>' : ''}${slot?.value && slot.error ? `<p role="status">${geoStatus(slot)}</p><button data-geo="retry">重新读取</button>` : ''}</section>`;
   }
   const weekly = (resource) =>
     ['overview', 'visibility', 'questions', 'answers', 'summary', 'article-citations'].includes(resource.split('/')[0]);
@@ -284,7 +295,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     if (action === 'clear-filters') {
       history = [];
       active = null;
-      await open('questions');
+      await open('questions', {}, isDemoProject(host.getContext()) && tab === 'work');
     }
     if (action === 'download' && !downloading && ['pdf', 'xlsx'].includes(el.dataset.format)) {
       const stamp = epoch;
@@ -328,7 +339,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
         params.unit_id = '';
       history = [];
       active = null;
-      await open('questions', params);
+      await open('questions', params, isDemoProject(host.getContext()) && tab === 'work');
       return;
     }
     if (!form.matches('[data-geo-week]')) return;

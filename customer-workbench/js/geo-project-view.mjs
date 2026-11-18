@@ -158,7 +158,7 @@ export const geoStatus = (slot) =>
         GEO_ACTION_INVALID: '操作参数无法读取，请重新读取页面后再试。',
       }[slot?.error] || '暂无数据，读取失败，请重新读取。';
 export function geoBasis(value) {
-  if (!value?.basis) return '';
+  if (!value?.basis || (value.tenant_id === 15 && value.project_id === 3)) return '';
   const {basis: b, scope: s} = value,
     p = b.period,
     c = b.source_counts;
