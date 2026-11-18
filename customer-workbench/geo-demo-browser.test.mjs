@@ -155,7 +155,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.$eval('[data-view=formal]', (button) => button.click());
     assert.equal(await p.$eval('.geo-view-modes', (control) => control.getAnimations().length), 0);
     await p.click('[data-view=demo]');
-    await p.emulateMediaFeatures(null);
+    await p.emulateMediaFeatures([]);
     for (const state of ['zero', 'unknown']) {
       chartState = state; await p.click('[data-geo=refresh]'); await p.waitForNetworkIdle({idleTime: 200});
       assert.equal(await p.$$eval('[data-demo-comparison] strong', (n) => n.every((e) => e.textContent === '0.0%')), true);
