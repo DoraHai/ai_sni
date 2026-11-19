@@ -246,3 +246,5 @@
   [data-geo-workspace]:has(> .geo-workspace--formal) > nav button { padding-inline: 9px; }
   .geo-workspace--formal [data-geo-questions] label { flex: 1 1 100%; }
 }
+
+.geo-demo-charts svg .geo-demo-trend-endpoint { font-size: 14px; font-weight: 700; fill: #14594c; }

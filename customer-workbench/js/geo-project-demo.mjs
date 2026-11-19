@@ -116,10 +116,27 @@ function demoCharts(g, selectedDay) {
     mention_rate,
   }));
   const selected = days.find((d) => d.date === selectedDay) || days.at(-1);
-  const change = (days.at(-1).mention_rate - days[0].mention_rate).toFixed(1);
-  const x = (i) => 46 + i * 564 / Math.max(1, days.length - 1), y = (r) => 146 - r * 1.2;
+  const first = days[0], last = days.at(-1);
+  const change = (last.mention_rate - first.mention_rate).toFixed(1);
+  const ticks = [55, 60, 65, 70, 75];
+  const x = (i) => 46 + i * 564 / (days.length - 1);
+  const y = (value) => 146 - (value - ticks[0]) * 6;
   const describe = (d) => `${d.date}：${rate(d)}（模拟方案）`;
-  return `<div class="geo-demo-charts"><figure aria-label="普通问题每日模拟提及率"><figcaption>每日模拟提及率 <small>独立模拟方案 · 首末日 +${change} 个百分点 · 北京时间</small><small>此曲线单独演示，汇总卡和模型对比使用已保存样本。</small></figcaption><svg viewBox="0 0 640 174" role="img" aria-label="独立模拟方案的每日提及率，纵轴 0–100%，下方可选择日期查看数值"><title>独立模拟方案的每日提及率，纵轴 0–100%</title>${[0, 50, 100].map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}<polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5"/>${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d.date === selected.date ? 5 : 3}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}<text x="46" y="170">${days[0].date.slice(5)}</text><text x="610" y="170" text-anchor="end">${days.at(-1).date.slice(5)}</text></svg><label class="geo-demo-day">查看日期 <select data-geo-demo-day aria-label="查看趋势日期">${days.map((d) => `<option value="${d.date}" ${d.date === selected.date ? 'selected' : ''}>${d.date}</option>`).join('')}</select></label><p class="geo-demo-day-value" aria-live="polite">${esc(describe(selected))}</p></figure><figure aria-label="普通问题每引擎模拟提及率"><figcaption>模型接口类别对比 <small>普通问题 · 模拟提及 / 已保存样本</small></figcaption><div class="geo-demo-engine-bars">${g.engines.map((c, i) => `<div data-demo-comparison="${c.engine_key}"><span>${demoEngines[i][1]}</span><span class="geo-demo-track" aria-hidden="true"><i style="width:${c.mention_rate}%"></i></span><strong>${rate(c)}</strong><small>${c.mentioned_count}/${c.sample_count} · 未判定 ${c.unknown_mention_count}</small></div>`).join('')}</div></figure></div>`;
+  const trend = `<figure aria-label="普通问题每日模拟提及率">
+    <figcaption>每日模拟提及率 <small>独立模拟方案 · 首末日 +${change} 个百分点 · 北京时间</small><small>纵轴 55%–75%（局部视图）。汇总卡和模型对比使用已保存样本。</small></figcaption>
+    <svg viewBox="0 0 640 174" role="img" aria-label="独立模拟方案的每日提及率局部视图，纵轴 55%–75%，从 ${rate(first)} 升至 ${rate(last)}">
+      <title>每日模拟提及率，首末日相差 ${change} 个百分点</title>
+      ${ticks.map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}
+      <polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5" stroke-linejoin="round"/>
+      ${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d === selected ? 5 : d === first || d === last ? 4 : 2.5}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}
+      <text class="geo-demo-trend-endpoint" x="46" y="${y(first.mention_rate) - 10}">${rate(first)}</text>
+      <text class="geo-demo-trend-endpoint" x="610" y="${y(last.mention_rate) - 10}" text-anchor="end">${rate(last)}</text>
+      <text x="46" y="170">${first.date.slice(5)}</text><text x="610" y="170" text-anchor="end">${last.date.slice(5)}</text>
+    </svg>
+    <label class="geo-demo-day">查看日期 <select data-geo-demo-day aria-label="查看趋势日期">${days.map((d) => `<option value="${d.date}" ${d === selected ? 'selected' : ''}>${d.date}</option>`).join('')}</select></label>
+    <p class="geo-demo-day-value" aria-live="polite">${esc(describe(selected))}</p>
+  </figure>`;
+  return `<div class="geo-demo-charts">${trend}<figure aria-label="普通问题每引擎模拟提及率"><figcaption>模型接口类别对比 <small>普通问题 · 模拟提及 / 已保存样本</small></figcaption><div class="geo-demo-engine-bars">${g.engines.map((c, i) => `<div data-demo-comparison="${c.engine_key}"><span>${demoEngines[i][1]}</span><span class="geo-demo-track" aria-hidden="true"><i style="width:${c.mention_rate}%"></i></span><strong>${rate(c)}</strong><small>${c.mentioned_count}/${c.sample_count} · 未判定 ${c.unknown_mention_count}</small></div>`).join('')}</div></figure></div>`;
 }
 const time = (s) => new Date(s).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false});
 export function geoDemoArea(value, filter = {}, {expanded = false, selectedDay = null} = {}) {
