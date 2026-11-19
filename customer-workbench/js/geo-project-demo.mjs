@@ -105,7 +105,7 @@ const rate = (c) => c.mention_rate === null ? '无样本' : `${c.mention_rate.to
 // aggregations and detailed evidence continue to come from demoOverview.
 const trendScenarioRates = [
   58.2, 58.8, 58.4, 59.3, 59.7, 60.5, 60.0, 59.8, 60.7, 61.1,
-  61.6, 61.2, 62.0, 62.6, 62.3, 62.9, 63.4, 64.0, 63.6, 64.7,
+  61.6, 61.2, 62.0, 62.6, 62.3, 62.9, 63.4, 64.1, 63.6, 64.7,
   65.1, 65.7, 65.3, 66.1, 66.6, 67.2, 66.8, 67.8, 68.3, 68.7,
 ];
 
