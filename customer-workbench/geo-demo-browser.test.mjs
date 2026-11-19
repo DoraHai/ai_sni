@@ -78,6 +78,10 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert(await p.$eval('.geo-demo-charts', (e) => e.getBoundingClientRect().bottom <= innerHeight), 'charts must fit desktop first screen');
     assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：68\.7%（方案）/);
     await p.select('[data-geo-demo-day]', '2026-10-20');
+    const latest = demoOverview(batch()).ordinary.daily.at(-1);
+    assert.equal(await p.$eval('[data-geo-latest-rate] time', (e) => e.dateTime), latest.date);
+    assert.match(await p.$eval('[data-geo-latest-rate] strong', (e) => e.textContent), new RegExp(latest.mention_rate.toFixed(1) + '%'));
+
     assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-10-20：58\.2%（方案）/);
     assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /独立方案 · 首末日 \+10\.5 个百分点/);
     assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /纵轴 55%–75%（局部视图）/);
