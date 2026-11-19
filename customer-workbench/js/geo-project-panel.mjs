@@ -63,7 +63,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       if (lastDemoPaint?.every((value, index) => Object.is(value, inputs[index]))) return;
       node.innerHTML = mode + geoDemoArea(overview || {tenant_id: context.tenantId,
         project_id: context.projectId, read_only: true}, demoFilter, {expanded: demoExpanded, selectedDay: demoDay}) +
-        `<button data-geo="refresh">重新读取演示概览</button>${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}`;
+        `<button data-geo="refresh">重新读取概览</button>${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}`;
       lastDemoPaint = inputs;
       revealTrend();
       return;

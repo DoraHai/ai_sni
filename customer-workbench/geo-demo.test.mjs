@@ -10,7 +10,7 @@ test('demo has actual counts, separate probe, eight labeled engines, date and pe
   const v = demoFixture(), d = demoProjection(v), html = geoDemoArea(v);
   assert.equal(d.saved_sample_count, d.ordinary.sample_count + d.brand_probe.sample_count);
   for (const text of ['GEO 概览', '2026-10-20 至 2026-11-18',
-    '其他（演示类别）', '混元模型接口类别；不代表元宝产品端实际检测', '普通问题（排除题 85）',
+    '其他（样本类别）', '混元模型接口类别；不代表元宝产品端实际检测', '普通问题（排除题 85）',
     '样本依据（30 条）', '#10001', '&lt;script&gt;']) assert(html.includes(text), text);
   assert.equal((html.match(/data-demo-engine=/g) || []).length, 7 * demoEngines.length);
   assert(!html.includes('<script>') && !html.includes('真实 API 回答') && !html.includes('合格回答'));
@@ -38,7 +38,7 @@ test('wrong scope and missing/malformed batches have no synthetic fallback', () 
   for (const mutate of mutations) {
     const v = demoFixture(); mutate(v);
     const html = geoDemoArea(v);
-    assert(html.includes('演示批次不可用') && !html.includes('data-demo-engine'));
+    assert(html.includes('样本批次不可用') && !html.includes('data-demo-engine'));
   }
   const v = demoFixture();
   v.data.demo_batch.brand_probe = {status: 'unavailable', reason_code: 'brand_probe_conflict'};
