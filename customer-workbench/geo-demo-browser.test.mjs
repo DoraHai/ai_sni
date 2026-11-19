@@ -38,8 +38,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
       const animate = Element.prototype.animate;
       Element.prototype.animate = function (frames, options) {
         if (this.closest('.geo-demo')) {
-          window.geoTrendMotion.push(this.hasAttribute('data-geo-trend-reveal') ? 'draw'
-            : this.hasAttribute('data-geo-trend-pulse') ? 'pulse' : this.tagName);
+          window.geoTrendMotion.push(this);
         }
         return animate.call(this, frames, options);
       };
@@ -79,9 +78,11 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=15&project_id=3');
     await p.waitForSelector('[data-demo-engine]');
     await p.waitForNetworkIdle({idleTime: 1200});
-    const trendMotion = await p.evaluate(() => window.geoTrendMotion);
-    assert.deepEqual([...new Set(trendMotion)].sort(), ['draw', 'pulse']);
-    await p.waitForNetworkIdle({idleTime: 200});
+    const trendMotion = await p.evaluate(() => window.geoTrendMotion.map((element) => ({
+      isCurrentCurve: element === document.querySelector('[data-geo-trend-motion]'),
+      tag: element.tagName,
+    })));
+    assert.deepEqual(trendMotion, [{isCurrentCurve: true, tag: 'DIV'}]);
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), false);
     assert.equal(await p.$$eval('[data-demo-comparison]', (n) => n.length), 8);
     const visible = await p.$eval('[data-geo-workspace]', (e) => e.innerText);
