@@ -80,6 +80,8 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.select('[data-geo-demo-day]', '2026-10-20');
     assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-10-20：58\.2%（模拟方案）/);
     assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /独立模拟方案 · 首末日 \+10\.5 个百分点/);
+    assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /纵轴 55%–75%（局部视图）/);
+    assert.deepEqual(await p.$$eval('.geo-demo-trend-endpoint', (xs) => xs.map((x) => x.textContent)), ['58.2%', '68.7%']);
     await screenshot('demo-selected-day.png');
     await p.click('[data-geo=demo-details]');
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), true);
