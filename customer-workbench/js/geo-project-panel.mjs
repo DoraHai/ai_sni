@@ -18,7 +18,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     actionError = null,
     downloading = false;
   let demoFilter = {}, view = 'demo', demoExpanded = false, demoDay = null;
-  let overviewEntranceStart = null;
+  let trendEntranceStart = null;
   const demoView = () => isDemoProject(host.getContext()) && view === 'demo';
   const available = (key) => !!slots[key]?.value;
   function tabs() {
@@ -36,31 +36,27 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
           (available('visibility') || slots.questions?.value?.data.items.length > 0)),
     );
   }
-  function revealOverview() {
-    const overview = node.querySelector?.(':scope > .geo-demo');
-    if (!overview?.animate || !overview.querySelector('.geo-demo-stats')) return;
-    const doc = overview.ownerDocument;
+  function revealTrend() {
+    const mask = node.querySelector?.('[data-geo-trend-reveal]');
+    if (!mask?.animate) return;
+    const doc = mask.ownerDocument;
     const now = doc.timeline.currentTime;
     if (now === null) return;
 
-    // Keep the original start time if an async read replaces the overview.
-    overviewEntranceStart ??= now;
-    const reduceMotion = doc.defaultView.matchMedia('(prefers-reduced-motion: reduce)');
-    if (reduceMotion.matches || now - overviewEntranceStart >= 660) return;
+    // Async reads can rebuild the SVG. Resume along the same timeline.
+    trendEntranceStart ??= now;
+    if (doc.defaultView.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-    const items = overview.querySelectorAll(
-      ':scope > h2, :scope > .geo-demo-meta, .geo-demo-stats > article, .geo-demo-charts > figure',
-    );
-    items.forEach((item, index) => {
-      const delay = index * 40;
-      const duration = 380;
-      if (now - overviewEntranceStart >= delay + duration) return;
-      const entrance = item.animate([
-        {opacity: 0, transform: 'translateY(12px)'},
-        {opacity: 1, transform: 'translateY(0)'},
-      ], {duration, delay, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'backwards'});
-      entrance.startTime = overviewEntranceStart;
-    });
+    const play = (element, frames, duration, delay = 0) => {
+      if (!element || now - trendEntranceStart >= delay + duration) return;
+      const motion = element.animate(frames, {
+        duration, delay, easing: 'cubic-bezier(0.33, 0.05, 0.25, 1)', fill: 'backwards',
+      });
+      motion.startTime = trendEntranceStart;
+    };
+    play(mask, [{transform: 'scaleX(0)'}, {transform: 'scaleX(1)'}], 760);
+    play(node.querySelector('[data-geo-trend-pulse]'),
+      [{opacity: 0, r: '5px'}, {opacity: 0.55, r: '8px', offset: 0.22}, {opacity: 0, r: '17px'}], 360, 760);
   }
   function paint() {
     if (!node) return;
@@ -70,7 +66,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       node.innerHTML = mode + geoDemoArea(slots.overview?.value || {tenant_id: context.tenantId,
         project_id: context.projectId, read_only: true}, demoFilter, {expanded: demoExpanded, selectedDay: demoDay}) +
         `<button data-geo="refresh">重新读取演示概览</button>${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}`;
-      revealOverview();
+      revealTrend();
       return;
     }
     const slot = active?.slot;

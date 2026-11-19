@@ -34,10 +34,13 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.evaluateOnNewDocument(() => sessionStorage.setItem('sem_auth_v1', JSON.stringify({version: 1, token: 'synthetic-only',
       user: {id: 7, tenant_id: 15, permissions: {'geo.assets': 'view', 'geo.content': 'view'}}})));
     await p.evaluateOnNewDocument(() => {
-      window.geoEntranceTargets = [];
+      window.geoTrendMotion = [];
       const animate = Element.prototype.animate;
       Element.prototype.animate = function (frames, options) {
-        if (frames[0]?.opacity === 0 && this.closest('.geo-demo')) window.geoEntranceTargets.push(this.tagName);
+        if (this.closest('.geo-demo')) {
+          window.geoTrendMotion.push(this.hasAttribute('data-geo-trend-reveal') ? 'draw'
+            : this.hasAttribute('data-geo-trend-pulse') ? 'pulse' : this.tagName);
+        }
         return animate.call(this, frames, options);
       };
     });
@@ -75,9 +78,9 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.setViewport({width: 1440, height: 1000});
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=15&project_id=3');
     await p.waitForSelector('[data-demo-engine]');
-    await p.waitForNetworkIdle({idleTime: 700});
-    const entranceTargets = await p.evaluate(() => window.geoEntranceTargets);
-    assert(entranceTargets.includes('H2') && entranceTargets.includes('ARTICLE') && entranceTargets.includes('FIGURE'));
+    await p.waitForNetworkIdle({idleTime: 1200});
+    const trendMotion = await p.evaluate(() => window.geoTrendMotion);
+    assert.deepEqual([...new Set(trendMotion)].sort(), ['draw', 'pulse']);
     await p.waitForNetworkIdle({idleTime: 200});
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), false);
     assert.equal(await p.$$eval('[data-demo-comparison]', (n) => n.length), 8);
@@ -89,7 +92,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert(await p.$eval('.geo-demo-charts', (e) => e.getBoundingClientRect().bottom <= innerHeight), 'charts must fit desktop first screen');
     assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：68\.7%（方案）/);
     await p.select('[data-geo-demo-day]', '2026-10-20');
-    assert.equal(await p.evaluate(() => window.geoEntranceTargets.length), entranceTargets.length);
+    assert.equal(await p.evaluate(() => window.geoTrendMotion.length), trendMotion.length);
     assert.equal(await p.$eval('[data-geo-latest-rate] time', (e) => e.dateTime), '2026-11-18');
     assert.match(await p.$eval('[data-geo-latest-rate] strong', (e) => e.textContent), /^68\.7%/);
 
