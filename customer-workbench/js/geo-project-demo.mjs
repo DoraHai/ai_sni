@@ -100,12 +100,29 @@ export function demoOverview(value) {
 }
 
 const rate = (c) => c.mention_rate === null ? '无样本' : `${c.mention_rate.toFixed(1)}%`;
+
+// Independently configured example for the trend chart. Saved snapshot
+// aggregations and detailed evidence continue to come from demoOverview.
+const trendScenarioMentions = [
+  24, 25, 24, 25, 25, 26, 25, 24, 25, 26,
+  26, 25, 26, 27, 26, 25, 26, 27, 27, 26,
+  27, 28, 27, 26, 27, 28, 27, 28, 27, 28,
+];
+const trendScenarioDailyTotal = 48;
+
 function demoCharts(g, selectedDay) {
   if (g.status !== 'available') return `<p role="status">普通问题统计不可用：${esc(reasons[g.reason_code])}。不生成趋势或引擎对比。</p>`;
-  const days = g.daily, selected = days.find((d) => d.date === selectedDay) || days.at(-1);
+  const days = trendScenarioMentions.map((mentioned_count, index) => ({
+    date: new Date(Date.UTC(2026, 9, 20 + index)).toISOString().slice(0, 10),
+    mentioned_count,
+    sample_count: trendScenarioDailyTotal,
+    mention_rate: 100 * mentioned_count / trendScenarioDailyTotal,
+  }));
+  const selected = days.find((d) => d.date === selectedDay) || days.at(-1);
+  const change = (days.at(-1).mention_rate - days[0].mention_rate).toFixed(1);
   const x = (i) => 46 + i * 564 / Math.max(1, days.length - 1), y = (r) => 146 - r * 1.2;
-  const describe = (d) => `${d.date}：${counts(d)}；未判定 ${d.unknown_mention_count} 条`;
-  return `<div class="geo-demo-charts"><figure aria-label="普通问题每日模拟提及率"><figcaption>每日模拟提及率 <small>普通问题 · 北京时间 · 纵轴 0–100%</small></figcaption><svg viewBox="0 0 640 174" role="img" aria-label="普通问题每日模拟提及率，来自已保存快照；下方可选择日期查看数值"><title>普通问题每日模拟提及率；品牌点名题不参与</title>${[0, 50, 100].map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}<polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5"/>${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d.date === selected.date ? 5 : 3}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}<text x="46" y="170">${days[0].date.slice(5)}</text><text x="610" y="170" text-anchor="end">${days.at(-1).date.slice(5)}</text></svg><label class="geo-demo-day">查看日期 <select data-geo-demo-day aria-label="查看趋势日期">${days.map((d) => `<option value="${d.date}" ${d.date === selected.date ? 'selected' : ''}>${d.date}</option>`).join('')}</select></label><p class="geo-demo-day-value" aria-live="polite">${esc(describe(selected))}</p></figure><figure aria-label="普通问题每引擎模拟提及率"><figcaption>模型接口类别对比 <small>普通问题 · 模拟提及 / 已保存样本</small></figcaption><div class="geo-demo-engine-bars">${g.engines.map((c, i) => `<div data-demo-comparison="${c.engine_key}"><span>${demoEngines[i][1]}</span><span class="geo-demo-track" aria-hidden="true"><i style="width:${c.mention_rate}%"></i></span><strong>${rate(c)}</strong><small>${c.mentioned_count}/${c.sample_count} · 未判定 ${c.unknown_mention_count}</small></div>`).join('')}</div></figure></div>`;
+  const describe = (d) => `${d.date}：${counts(d)}（模拟方案）`;
+  return `<div class="geo-demo-charts"><figure aria-label="普通问题每日模拟提及率"><figcaption>每日模拟提及率 <small>独立模拟方案 · 首末日 +${change} 个百分点 · 北京时间</small><small>此曲线单独演示，汇总卡和模型对比使用已保存样本。</small></figcaption><svg viewBox="0 0 640 174" role="img" aria-label="独立模拟方案的每日提及率，纵轴 0–100%，下方可选择日期查看数值"><title>独立模拟方案的每日提及率，纵轴 0–100%</title>${[0, 50, 100].map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}<polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5"/>${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d.date === selected.date ? 5 : 3}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}<text x="46" y="170">${days[0].date.slice(5)}</text><text x="610" y="170" text-anchor="end">${days.at(-1).date.slice(5)}</text></svg><label class="geo-demo-day">查看日期 <select data-geo-demo-day aria-label="查看趋势日期">${days.map((d) => `<option value="${d.date}" ${d.date === selected.date ? 'selected' : ''}>${d.date}</option>`).join('')}</select></label><p class="geo-demo-day-value" aria-live="polite">${esc(describe(selected))}</p></figure><figure aria-label="普通问题每引擎模拟提及率"><figcaption>模型接口类别对比 <small>普通问题 · 模拟提及 / 已保存样本</small></figcaption><div class="geo-demo-engine-bars">${g.engines.map((c, i) => `<div data-demo-comparison="${c.engine_key}"><span>${demoEngines[i][1]}</span><span class="geo-demo-track" aria-hidden="true"><i style="width:${c.mention_rate}%"></i></span><strong>${rate(c)}</strong><small>${c.mentioned_count}/${c.sample_count} · 未判定 ${c.unknown_mention_count}</small></div>`).join('')}</div></figure></div>`;
 }
 const time = (s) => new Date(s).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false});
 export function geoDemoArea(value, filter = {}, {expanded = false, selectedDay = null} = {}) {
