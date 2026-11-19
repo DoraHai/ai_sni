@@ -32,7 +32,12 @@ export function mountGeoWorkbench({root, host, logout, initialOnsiteTaskId = nul
         await project.showOnsite();
     } catch {
       if (stamp === epoch) { identity = null; message = '暂无数据，请重新核验客户与项目。'; }
-    } finally { if (stamp === epoch) { busy = false; render(); } }
+    } finally {
+      if (stamp === epoch) {
+        busy = false;
+        if (!identity || !project.isDemoView()) render();
+      }
+    }
   }
   const unsubscribe = host.subscribe(() => {
     epoch++; project.reset(); visibility.reset(); identity = null; busy = false;

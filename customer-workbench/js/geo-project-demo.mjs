@@ -126,19 +126,21 @@ function demoCharts(g, selectedDay) {
   const describe = (d) => `${d.date}：${rate(d)}（方案）`;
   const trend = `<figure aria-label="普通问题每日提及率">
     <figcaption>每日提及率 <small>独立方案 · 首末日 +${change} 个百分点 · 北京时间</small><small>纵轴 55%–75%（局部视图）。最新日提及率与本曲线同口径，其余指标及模型对比使用已保存样本。</small></figcaption>
-    <svg viewBox="0 0 640 174" role="img" aria-label="独立方案的每日提及率局部视图，纵轴 55%–75%，从 ${rate(first)} 升至 ${rate(last)}">
-      <title>每日提及率，首末日相差 ${change} 个百分点</title>
-      ${ticks.map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}
-      <defs><clipPath id="geo-overview-trend-clip"><rect data-geo-trend-reveal width="640" height="174"/></clipPath></defs>
-      <g clip-path="url(#geo-overview-trend-clip)">
-      <polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5" stroke-linejoin="round"/>
-      ${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d === selected ? 5 : d === first || d === last ? 4 : 2.5}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}
-      <text class="geo-demo-trend-endpoint" x="46" y="${y(first.mention_rate) - 10}">${rate(first)}</text>
-      <text class="geo-demo-trend-endpoint" x="610" y="${y(last.mention_rate) - 10}" text-anchor="end">${rate(last)}</text>
-      </g>
-      <circle data-geo-trend-pulse cx="610" cy="${y(last.mention_rate)}" r="5" fill="none" stroke="#16766b" stroke-width="1.5" opacity="0" pointer-events="none"/>
-      <text x="46" y="170">${first.date.slice(5)}</text><text x="610" y="170" text-anchor="end">${last.date.slice(5)}</text>
-    </svg>
+    <div class="geo-demo-trend-plot">
+      <svg viewBox="0 0 640 174" role="img" aria-label="独立方案的每日提及率局部视图，纵轴 55%–75%，从 ${rate(first)} 升至 ${rate(last)}">
+        <title>每日提及率，首末日相差 ${change} 个百分点</title>
+        ${ticks.map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}
+        <text x="46" y="170">${first.date.slice(5)}</text><text x="610" y="170" text-anchor="end">${last.date.slice(5)}</text>
+      </svg>
+      <div data-geo-trend-motion aria-hidden="true">
+        <svg viewBox="0 0 640 174">
+          <polyline points="${days.map((d, i) => `${x(i)},${y(d.mention_rate)}`).join(' ')}" fill="none" stroke="#16766b" stroke-width="2.5" stroke-linejoin="round"/>
+          ${days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.mention_rate)}" r="${d === selected ? 5 : d === first || d === last ? 4 : 2.5}" fill="#16766b"><title>${esc(describe(d))}</title></circle>`).join('')}
+          <text class="geo-demo-trend-endpoint" x="46" y="${y(first.mention_rate) - 10}">${rate(first)}</text>
+          <text class="geo-demo-trend-endpoint" x="610" y="${y(last.mention_rate) - 10}" text-anchor="end">${rate(last)}</text>
+        </svg>
+      </div>
+    </div>
     <label class="geo-demo-day">查看日期 <select data-geo-demo-day aria-label="查看趋势日期">${days.map((d) => `<option value="${d.date}" ${d === selected ? 'selected' : ''}>${d.date}</option>`).join('')}</select></label>
     <p class="geo-demo-day-value" aria-live="polite">${esc(describe(selected))}</p>
   </figure>`;

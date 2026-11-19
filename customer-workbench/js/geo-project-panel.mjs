@@ -18,7 +18,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     actionError = null,
     downloading = false;
   let demoFilter = {}, view = 'demo', demoExpanded = false, demoDay = null;
-  let trendEntranceStart = null;
+  let trendEntranceStart = null, lastDemoPaint = null;
   const demoView = () => isDemoProject(host.getContext()) && view === 'demo';
   const available = (key) => !!slots[key]?.value;
   function tabs() {
@@ -37,38 +37,38 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
     );
   }
   function revealTrend() {
-    const mask = node.querySelector?.('[data-geo-trend-reveal]');
-    if (!mask?.animate) return;
-    const doc = mask.ownerDocument;
+    const layer = node.querySelector?.('[data-geo-trend-motion]');
+    if (!layer?.animate) return;
+    const doc = layer.ownerDocument;
     const now = doc.timeline.currentTime;
-    if (now === null) return;
+    if (now === null || doc.defaultView.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-    // Async reads can rebuild the SVG. Resume along the same timeline.
+    const duration = 320;
     trendEntranceStart ??= now;
-    if (doc.defaultView.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-    const play = (element, frames, duration, delay = 0) => {
-      if (!element || now - trendEntranceStart >= delay + duration) return;
-      const motion = element.animate(frames, {
-        duration, delay, easing: 'cubic-bezier(0.33, 0.05, 0.25, 1)', fill: 'backwards',
-      });
-      motion.startTime = trendEntranceStart;
-    };
-    play(mask, [{transform: 'scaleX(0)'}, {transform: 'scaleX(1)'}], 760);
-    play(node.querySelector('[data-geo-trend-pulse]'),
-      [{opacity: 0, r: '5px'}, {opacity: 0.55, r: '8px', offset: 0.22}, {opacity: 0, r: '17px'}], 360, 760);
+    if (now - trendEntranceStart >= duration) return;
+    const motion = layer.animate([
+      {transform: 'translate3d(8px, 0, 0)', opacity: 0},
+      {transform: 'translate3d(0, 0, 0)', opacity: 1},
+    ], {duration, easing: 'cubic-bezier(0.2, 0.65, 0.3, 1)'});
+    motion.startTime = trendEntranceStart;
   }
   function paint() {
     if (!node) return;
     const context = host.getContext();
     const mode = isDemoProject(context) ? `<nav class="geo-view-modes" aria-label="GEO 数据模式"><button data-geo="mode" data-view="demo" aria-pressed="${demoView()}">总览模式</button><button data-geo="mode" data-view="formal" aria-pressed="${!demoView()}">详细模式</button></nav>` : '';
     if (demoView()) {
-      node.innerHTML = mode + geoDemoArea(slots.overview?.value || {tenant_id: context.tenantId,
+      const overview = slots.overview?.value;
+      const inputs = [node, overview, context.tenantId, context.projectId, demoFilter, demoExpanded, demoDay, actionError];
+      // Other project reads can finish while the chart is animating.
+      if (lastDemoPaint?.every((value, index) => Object.is(value, inputs[index]))) return;
+      node.innerHTML = mode + geoDemoArea(overview || {tenant_id: context.tenantId,
         project_id: context.projectId, read_only: true}, demoFilter, {expanded: demoExpanded, selectedDay: demoDay}) +
         `<button data-geo="refresh">重新读取演示概览</button>${actionError ? `<p role="alert">${geoStatus({error: actionError})}</p>` : ''}`;
+      lastDemoPaint = inputs;
       revealTrend();
       return;
     }
+    lastDemoPaint = null;
     const slot = active?.slot;
     const simulated = isDemoProject(context);
     const demoValue = slots.overview?.value || {tenant_id: context.tenantId, project_id: context.projectId, read_only: true};
@@ -185,6 +185,7 @@ export function createGeoProjectPanel({host, onNavigate = () => {}, canNavigate 
       await selectTab(tab);
   }
   function reset() {
+    trendEntranceStart = null;
     demoFilter = {};
     view = 'demo'; demoExpanded = false; demoDay = null;
     epoch++;

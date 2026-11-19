@@ -247,4 +247,7 @@
   .geo-workspace--formal [data-geo-questions] label { flex: 1 1 100%; }
 }
 
+.geo-demo-trend-plot { position: relative; margin-top: 4px; }
+.geo-demo-charts .geo-demo-trend-plot svg { margin-top: 0; }
+.geo-demo-trend-plot > [data-geo-trend-motion] { position: absolute; inset: 0; }
 .geo-demo-charts svg .geo-demo-trend-endpoint { font-size: 14px; font-weight: 700; fill: #14594c; }
