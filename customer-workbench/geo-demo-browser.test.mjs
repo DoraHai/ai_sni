@@ -76,10 +76,10 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert.equal(await p.$eval('[data-geo-demo]', (e) => e.checkVisibility()), false);
     await screenshot('demo-first-screen.png');
     assert(await p.$eval('.geo-demo-charts', (e) => e.getBoundingClientRect().bottom <= innerHeight), 'charts must fit desktop first screen');
-    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：28\/48 · 58\.3%（模拟方案）/);
+    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：68\.7%（模拟方案）/);
     await p.select('[data-geo-demo-day]', '2026-10-20');
-    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-10-20：24\/48 · 50\.0%（模拟方案）/);
-    assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /独立模拟方案 · 首末日 \+8\.3 个百分点/);
+    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-10-20：58\.2%（模拟方案）/);
+    assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /独立模拟方案 · 首末日 \+10\.5 个百分点/);
     await screenshot('demo-selected-day.png');
     await p.click('[data-geo=demo-details]');
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), true);
