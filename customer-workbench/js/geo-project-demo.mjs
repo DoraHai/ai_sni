@@ -109,12 +109,14 @@ const trendScenarioRates = [
   65.1, 65.7, 65.3, 66.1, 66.6, 67.2, 66.8, 67.8, 68.3, 68.7,
 ];
 
+const trendScenarioDays = trendScenarioRates.map((mention_rate, index) => ({
+  date: new Date(Date.UTC(2026, 9, 20 + index)).toISOString().slice(0, 10),
+  mention_rate,
+}));
+
 function demoCharts(g, selectedDay) {
   if (g.status !== 'available') return `<p role="status">普通问题统计不可用：${esc(reasons[g.reason_code])}。不生成趋势或引擎对比。</p>`;
-  const days = trendScenarioRates.map((mention_rate, index) => ({
-    date: new Date(Date.UTC(2026, 9, 20 + index)).toISOString().slice(0, 10),
-    mention_rate,
-  }));
+  const days = trendScenarioDays;
   const selected = days.find((d) => d.date === selectedDay) || days.at(-1);
   const first = days[0], last = days.at(-1);
   const change = (last.mention_rate - first.mention_rate).toFixed(1);
@@ -123,7 +125,7 @@ function demoCharts(g, selectedDay) {
   const y = (value) => 146 - (value - ticks[0]) * 6;
   const describe = (d) => `${d.date}：${rate(d)}（方案）`;
   const trend = `<figure aria-label="普通问题每日提及率">
-    <figcaption>每日提及率 <small>独立方案 · 首末日 +${change} 个百分点 · 北京时间</small><small>纵轴 55%–75%（局部视图）。汇总卡和模型对比使用已保存样本。</small></figcaption>
+    <figcaption>每日提及率 <small>独立方案 · 首末日 +${change} 个百分点 · 北京时间</small><small>纵轴 55%–75%（局部视图）。最新日提及率与本曲线同口径，其余指标及模型对比使用已保存样本。</small></figcaption>
     <svg viewBox="0 0 640 174" role="img" aria-label="独立方案的每日提及率局部视图，纵轴 55%–75%，从 ${rate(first)} 升至 ${rate(last)}">
       <title>每日提及率，首末日相差 ${change} 个百分点</title>
       ${ticks.map((n) => `<line x1="46" x2="610" y1="${y(n)}" y2="${y(n)}" stroke="#dce5e3"/><text x="38" y="${y(n) + 4}" text-anchor="end">${n}%</text>`).join('')}
@@ -145,9 +147,9 @@ export function geoDemoArea(value, filter = {}, {expanded = false, selectedDay =
   const title = '<h2>GEO 概览</h2>';
   if (d.status !== 'available') return `<section class="geo-demo" aria-label="独立演示区域">${title}<p role="status">演示批次不可用：${esc(reasons[d.reason_code] || '批次响应尚未提供或未通过校验')}。无替代数据。</p></section>`;
   const overview = demoOverview(value), ordinary = overview.ordinary, probe = overview.brand_probe;
-  const latest = ordinary.daily?.at(-1);
+  const latest = trendScenarioDays.at(-1);
   const ordinaryMetrics = ordinary.status === 'available'
-    ? `<article><h3>普通问题 · 提及回答</h3><strong>${ordinary.mentioned_count}<small> / ${ordinary.sample_count}</small></strong><p>提及回答 / 已保存样本</p></article><article data-geo-latest-rate><h3>普通问题 · 最新日提及率</h3>${latest ? `<strong>${rate(latest)} <small><time datetime="${latest.date}">${latest.date}</time></small></strong><p>${latest.mentioned_count} / ${latest.sample_count} 条（北京时间） · 排除题 85，未判定 ${latest.unknown_mention_count} 条计入分母</p>` : '<p>暂无每日样本</p>'}</article>`
+    ? `<article><h3>普通问题 · 提及回答</h3><strong>${ordinary.mentioned_count}<small> / ${ordinary.sample_count}</small></strong><p>提及回答 / 已保存样本</p></article><article data-geo-latest-rate><h3>普通问题 · 最新日提及率</h3><strong>${rate(latest)} <small><time datetime="${latest.date}">${latest.date}</time></small></strong><p>同下方独立方案的最新日（北京时间）</p></article>`
     : `<article><h3>普通问题统计</h3><p>${esc(reasons[ordinary.reason_code])}</p></article>`;
   const coveredEngines = ordinary.status === 'available' ? ordinary.engines.filter((c) => c.mentioned_count > 0).length : null;
   const visibilityMetric = `<article><h3>AI 可见度概况（演示）</h3><strong>${coveredEngines === null ? '无数据' : `${coveredEngines} / ${demoEngines.length}`}</strong><p>至少一次提及的模型类别 / 全部模型类别；排除题 85。</p></article>`;
