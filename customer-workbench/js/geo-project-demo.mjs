@@ -142,7 +142,7 @@ const time = (s) => new Date(s).toLocaleString('zh-CN', {timeZone: 'Asia/Shangha
 export function geoDemoArea(value, filter = {}, {expanded = false, selectedDay = null} = {}) {
   const d = demoProjection(value);
   if (d === null) return '';
-  const title = '<h2>GEO 演示概览</h2>';
+  const title = '<h2>GEO 概览</h2>';
   if (d.status !== 'available') return `<section class="geo-demo" aria-label="独立演示区域">${title}<p role="status">演示批次不可用：${esc(reasons[d.reason_code] || '批次响应尚未提供或未通过校验')}。无替代数据。</p></section>`;
   const overview = demoOverview(value), ordinary = overview.ordinary, probe = overview.brand_probe;
   const ordinaryMetrics = ordinary.status === 'available'

@@ -87,7 +87,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), true);
     assert.equal(await p.$$eval('[data-demo-engine]', (n) => n.length), 56);
     const text = await p.$eval('.geo-demo', (e) => e.textContent);
-    assert(text.includes('GEO 演示概览') && text.includes('2026-10-20 至 2026-11-18'));
+    assert(text.includes('GEO 概览') && text.includes('2026-10-20 至 2026-11-18'));
     assert(!text.includes('真实 API 回答') && !text.includes('合格回答'));
     await screenshot('demo-expanded-grid.png', true);
     await p.$eval('[data-demo-engine] details', (e) => e.open = true);
