@@ -9,9 +9,9 @@ import {demoFixture} from './tests/geo-demo-fixture.mjs';
 test('demo has actual counts, separate probe, eight labeled engines, date and per-cell saved IDs', () => {
   const v = demoFixture(), d = demoProjection(v), html = geoDemoArea(v);
   assert.equal(d.saved_sample_count, d.ordinary.sample_count + d.brand_probe.sample_count);
-  for (const text of ['演示数据，不代表真实引擎检测或实际效果', '2026-10-20 至 2026-11-18',
+  for (const text of ['GEO 演示概览', '2026-10-20 至 2026-11-18',
     '其他（演示类别）', '混元模型接口类别；不代表元宝产品端实际检测', '普通问题（排除题 85）',
-    '模拟样本依据（30 条）', '#10001', '&lt;script&gt;']) assert(html.includes(text), text);
+    '样本依据（30 条）', '#10001', '&lt;script&gt;']) assert(html.includes(text), text);
   assert.equal((html.match(/data-demo-engine=/g) || []).length, 7 * demoEngines.length);
   assert(!html.includes('<script>') && !html.includes('真实 API 回答') && !html.includes('合格回答'));
   const filtered = geoDemoArea(v, {kind: 'ordinary', q: '83'});

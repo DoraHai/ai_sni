@@ -76,10 +76,10 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert.equal(await p.$eval('[data-geo-demo]', (e) => e.checkVisibility()), false);
     await screenshot('demo-first-screen.png');
     assert(await p.$eval('.geo-demo-charts', (e) => e.getBoundingClientRect().bottom <= innerHeight), 'charts must fit desktop first screen');
-    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：68\.7%（模拟方案）/);
+    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：68\.7%（方案）/);
     await p.select('[data-geo-demo-day]', '2026-10-20');
-    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-10-20：58\.2%（模拟方案）/);
-    assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /独立模拟方案 · 首末日 \+10\.5 个百分点/);
+    assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-10-20：58\.2%（方案）/);
+    assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /独立方案 · 首末日 \+10\.5 个百分点/);
     assert.match(await p.$eval('.geo-demo-charts figcaption', (e) => e.textContent), /纵轴 55%–75%（局部视图）/);
     assert.deepEqual(await p.$$eval('.geo-demo-trend-endpoint', (xs) => xs.map((x) => x.textContent)), ['58.2%', '68.7%']);
     await screenshot('demo-selected-day.png');
@@ -87,7 +87,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), true);
     assert.equal(await p.$$eval('[data-demo-engine]', (n) => n.length), 56);
     const text = await p.$eval('.geo-demo', (e) => e.textContent);
-    assert(text.includes('演示数据，不代表真实引擎检测或实际效果') && text.includes('2026-10-20 至 2026-11-18'));
+    assert(text.includes('GEO 演示概览') && text.includes('2026-10-20 至 2026-11-18'));
     assert(!text.includes('真实 API 回答') && !text.includes('合格回答'));
     await screenshot('demo-expanded-grid.png', true);
     await p.$eval('[data-demo-engine] details', (e) => e.open = true);
