@@ -105,6 +105,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.click('[data-geo=demo-details]');
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), true);
     assert.equal(await p.$$eval('[data-demo-engine]', (n) => n.length), 56);
+    assert.doesNotMatch(await p.$eval('[data-geo-workspace]', (e) => e.innerText), /演示/);
     const text = await p.$eval('.geo-demo', (e) => e.textContent);
     assert(text.includes('GEO 概览') && text.includes('2026-10-20 至 2026-11-18'));
     assert(!text.includes('真实 API 回答') && !text.includes('合格回答'));
@@ -119,8 +120,11 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.$eval('[data-demo-engine] details', (e) => e.open = true);
     assert.match(await p.$eval('[data-demo-engine] details', (e) => e.innerText), /#10001/);
     await p.evaluate(() => {
-      [...document.querySelectorAll('.geo-demo details')].find((e) => e.querySelector('summary')?.textContent === '演示批次依据').open = true;
+      [...document.querySelectorAll('.geo-demo details')].find((e) => e.querySelector('summary')?.textContent === '样本批次依据').open = true;
     });
+    const evidence = await p.$eval('.geo-demo [data-geo-demo-details]', (e) => e.innerText);
+    assert.doesNotMatch(evidence, /演示/);
+    assert.match(evidence, /本批模拟样本/);
     await screenshot('demo-expanded-evidence.png', true);
     await p.setViewport({width: 390, height: 844});
     assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -186,7 +190,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     }
     missing = true;
     await p.click('[data-geo=refresh]');
-    await p.waitForFunction(() => document.querySelector('.geo-demo')?.textContent.includes('未找到已核演示批次'));
+    await p.waitForFunction(() => document.querySelector('.geo-demo')?.textContent.includes('未找到已核验的样本批次'));
     assert.equal(await p.$('[data-demo-engine]'), null);
     assert.equal(await p.$('[data-demo-comparison]'), null);
     await screenshot('demo-missing.png');
