@@ -67,6 +67,11 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     await p.setViewport({width: 1440, height: 1000});
     await p.goto(origin + '/customer-workbench/?module=geo&tenant_id=15&project_id=3');
     await p.waitForSelector('[data-demo-engine]');
+    await p.waitForFunction(() =>
+      document.querySelector('.geo-demo h2')?.getAnimations().length > 0 &&
+      document.querySelector('.geo-demo-charts figure')?.getAnimations().length > 0);
+    await p.waitForFunction(() =>
+      document.querySelector('.geo-demo-stats')?.getAnimations({subtree: true}).length === 0);
     await p.waitForNetworkIdle({idleTime: 200});
     assert.equal(await p.$eval('[data-geo-demo-details]', (e) => e.open), false);
     assert.equal(await p.$$eval('[data-demo-comparison]', (n) => n.length), 8);
@@ -78,6 +83,7 @@ test('built demo: first screen, chart states, collapsed details, formal regressi
     assert(await p.$eval('.geo-demo-charts', (e) => e.getBoundingClientRect().bottom <= innerHeight), 'charts must fit desktop first screen');
     assert.match(await p.$eval('.geo-demo-day-value', (e) => e.textContent), /2026-11-18：68\.7%（方案）/);
     await p.select('[data-geo-demo-day]', '2026-10-20');
+    assert.equal(await p.$eval('.geo-demo h2', (e) => e.getAnimations().length), 0);
     assert.equal(await p.$eval('[data-geo-latest-rate] time', (e) => e.dateTime), '2026-11-18');
     assert.match(await p.$eval('[data-geo-latest-rate] strong', (e) => e.textContent), /^68\.7%/);
 
